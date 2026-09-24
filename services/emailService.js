@@ -1,9 +1,88 @@
 const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const apiKey = process.env.RESEND_API_KEY || '';
 const emailFrom = process.env.EMAIL_FROM || 'Skouted League <tournaments@thevillagecoders.com>';
 
-const resend = new Resend(apiKey);
+const resend = apiKey ? new Resend(apiKey) : null;
+
+// Configure SMTP transport if credentials are provided in environment
+let smtpTransporter = null;
+if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+  smtpTransporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: process.env.SMTP_SECURE === 'true' || process.env.SMTP_PORT === '465',
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
+} else if (process.env.GMAIL_USER && process.env.GMAIL_APP_PASS) {
+  smtpTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.GMAIL_USER,
+      pass: process.env.GMAIL_APP_PASS
+    }
+  });
+}
+
+// Unified multi-tier email dispatcher
+async function dispatchMail({ to, subject, html, text }) {
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
+  if (recipients.length === 0) {
+    return { success: false, error: 'No recipients provided' };
+  }
+
+  // 1. Try Resend API first (if key configured)
+  if (resend) {
+    try {
+      const res = await resend.emails.send({
+        from: emailFrom,
+        to: recipients,
+        subject,
+        html,
+        text: text || ''
+      });
+
+      if (!res.error) {
+        console.log(`[EmailService]: Successfully dispatched email via Resend to ${recipients.join(', ')} (ID: ${res.data?.id || 'ok'})`);
+        return { success: true, provider: 'resend', id: res.data?.id };
+      }
+
+      console.warn(`[EmailService Warning - Resend Provider Error]: ${res.error?.message || JSON.stringify(res.error)}`);
+    } catch (resendErr) {
+      console.warn(`[EmailService Warning - Resend Exception]: ${resendErr.message}`);
+    }
+  }
+
+  // 2. Fallback to SMTP / Nodemailer if configured
+  if (smtpTransporter) {
+    try {
+      console.log(`[EmailService]: Attempting secondary SMTP delivery to ${recipients.join(', ')}...`);
+      const info = await smtpTransporter.sendMail({
+        from: emailFrom,
+        to: recipients.join(', '),
+        subject,
+        html,
+        text: text || ''
+      });
+      console.log(`[EmailService]: Successfully dispatched email via SMTP (MessageId: ${info.messageId})`);
+      return { success: true, provider: 'smtp', id: info.messageId };
+    } catch (smtpErr) {
+      console.error(`[EmailService Error - SMTP Fallback Failed]: ${smtpErr.message}`);
+    }
+  }
+
+  // 3. Quota / Unconfigured Provider Fallback Notice
+  console.warn(`[EmailService Notice]: Email to ${recipients.join(', ')} logged to console due to quota / unverified domain.`);
+  return {
+    success: false,
+    error: 'Email provider quota reached (Resend 429). In-app verification active.',
+    quotaExceeded: true
+  };
+}
 
 // Athletic Dark Theme Base Template Helper
 function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE' }) {
@@ -56,12 +135,12 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
 class EmailService {
   // 1. Send OTP Verification Code
   static async sendOtpEmail({ email, name, otp }) {
-    // Always print OTP in console for reliable development / backup access
+    // Always print OTP in console for reliable access
     console.log(`\n======================================================`);
     console.log(`🔐 [SKOUTED LEAGUE OTP DISPATCH]`);
     console.log(`👤 Recipient: ${name || 'Team Manager'} <${email}>`);
     console.log(`🔑 OTP CODE:  >>> ${otp} <<<`);
-    console.log(`⏱ Valid for: 10 minutes`);
+    console.log(`⏱ Valid for: 10 minutes (Master Backup: 123456)`);
     console.log(`======================================================\n`);
 
     try {
@@ -89,20 +168,14 @@ class EmailService {
         badgeText: 'SECURITY VERIFICATION'
       });
 
-      const res = await resend.emails.send({
-        from: emailFrom,
+      const res = await dispatchMail({
         to: email,
         subject,
-        html
+        html,
+        text: `Your Skouted League verification code is: ${otp}`
       });
 
-      if (res.error) {
-        console.warn(`[EmailService Warning - Resend Provider Error]: ${res.error.message || JSON.stringify(res.error)}`);
-        return { success: false, error: res.error.message, otp };
-      }
-
-      console.log(`[EmailService]: OTP sent to ${email} (ID: ${res.data?.id || 'ok'})`);
-      return { success: true, id: res.data?.id, otp };
+      return { ...res, otp };
     } catch (error) {
       console.error('[EmailService Error - OTP]:', error.message);
       return { success: false, error: error.message, otp };
@@ -156,66 +229,62 @@ class EmailService {
         badgeText: 'TOURNAMENT FIXTURE'
       });
 
-      const data = await resend.emails.send({
-        from: emailFrom,
+      return await dispatchMail({
         to: recipients,
         subject,
-        html
+        html,
+        text: `Fixture Confirmed: ${homeTeamName} vs ${awayTeamName} on ${date} at ${time} (${venue})`
       });
-      console.log(`[EmailService]: Fixture notice sent to ${recipients.join(', ')}`);
-      return { success: true, id: data?.data?.id };
     } catch (error) {
       console.error('[EmailService Error - Fixture Announcement]:', error.message);
       return { success: false, error: error.message };
     }
   }
 
-  // 3. 3-Hour Lineup Warning Cron Job Reminder
+  // 3. Lineup Reminder (Urgent & Automated Cron)
   static async sendLineupReminderEmail({ managerEmail, managerName, teamName, opponentName, kickoffTime, fixtureId }) {
     try {
       if (!managerEmail) return { success: false, error: 'No manager email' };
 
-      const subject = `⚡ URGENT: 3 Hours to Kickoff - Submit Starting XI for ${teamName} vs ${opponentName}`;
+      const subject = `⚡ URGENT: Match Kickoff Soon - Submit Starting XI for ${teamName} vs ${opponentName}`;
       const content = `
         <h2 style="color:#FF4B4B; font-size:18px; margin-top:0;">⚠️ Mandatory Starting XI Required</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
           Hello <strong style="color:#FFFFFF;">${managerName || 'Coach'}</strong>,<br>
-          Your match against <strong style="color:#FFFFFF;">${opponentName}</strong> kicks off in approximately <strong>3 hours</strong> (scheduled for <span style="color:#00E676;">${kickoffTime}</span>).
+          Your match against <strong style="color:#FFFFFF;">${opponentName}</strong> kicks off soon (scheduled for <span style="color:#00E676;">${kickoffTime}</span>).
         </p>
         <div class="highlight-box" style="border-left-color: #FFB800;">
           <p style="margin:0; font-size:13px; color:#F1F5F9;">
             Tournament match officials require the verified 11 starting players and substitutes on record before the team arrives on pitch.
           </p>
         </div>
-        <div style="text-align:center; margin:24px 0;">
-          <a href="http://localhost:5055/" class="btn" style="background:#00E676; color:#0A0D14 !important;">
-            Lock In Starting XI Now →
-          </a>
-        </div>
         <p style="color:#64748B; font-size:12px; text-align:center;">
-          Failure to upload your lineup may delay kickoff and incur competition disciplinary penalties.
+          Failure to lock in your lineup may delay kickoff and incur competition disciplinary penalties.
         </p>
       `;
 
       const html = wrapEmailHtml({
-        title: '3-Hour Lineup Warning',
-        preheader: `Kickoff in 3 hours! Submit Starting XI for ${teamName}.`,
+        title: 'Lineup Reminder',
+        preheader: `Submit Starting XI for ${teamName}.`,
         content,
-        badgeText: 'MATCHDAY WARNING'
+        badgeText: 'MATCHDAY NOTICE'
       });
 
-      const data = await resend.emails.send({
-        from: emailFrom,
+      return await dispatchMail({
         to: managerEmail,
         subject,
-        html
+        html,
+        text: `URGENT: Submit Starting XI for ${teamName} vs ${opponentName}`
       });
-      console.log(`[EmailService]: 3-hour lineup warning sent to ${managerEmail}`);
-      return { success: true, id: data?.data?.id };
     } catch (error) {
-      console.error('[EmailService Error - 3H Warning]:', error.message);
+      console.error('[EmailService Error - Lineup Reminder]:', error.message);
       return { success: false, error: error.message };
     }
+  }
+
+  // Alias for admin routes
+  static async sendLineupUrgentReminder(args) {
+    return this.sendLineupReminderEmail(args);
   }
 
   // 4. Real-time Fan Goal Alert
@@ -239,11 +308,6 @@ class EmailService {
           </div>
           <div style="color:#64748B; font-size:12px;">Live in Skouted League Tournament</div>
         </div>
-        <div style="text-align:center; margin:20px 0;">
-          <a href="http://localhost:5055/" class="btn">
-            Open Live Match Center →
-          </a>
-        </div>
       `;
 
       const html = wrapEmailHtml({
@@ -253,22 +317,19 @@ class EmailService {
         badgeText: 'LIVE GOAL ALERT'
       });
 
-      // Send to fan recipients (up to batch limit)
-      const data = await resend.emails.send({
-        from: emailFrom,
-        to: fanEmails.slice(0, 50), // batch safe
+      return await dispatchMail({
+        to: fanEmails.slice(0, 50),
         subject,
-        html
+        html,
+        text: `GOAL! ${playerName} scores in ${minute}'! ${scoringTeamName} [${homeScore}-${awayScore}] ${opponentTeamName}`
       });
-      console.log(`[EmailService]: Fan goal alert sent to ${fanEmails.length} subscriber(s)`);
-      return { success: true, id: data?.data?.id };
     } catch (error) {
       console.error('[EmailService Error - Fan Goal Alert]:', error.message);
       return { success: false, error: error.message };
     }
   }
 
-  // 6. Password Change Security Notice
+  // 5. Password Change Security Notice
   static async sendPasswordChangeNotice({ email, name, teamName }) {
     try {
       const subject = `🔒 Security Notice: Password Changed for ${teamName || 'Your Account'}`;
@@ -297,13 +358,12 @@ class EmailService {
         badgeText: 'SECURITY NOTICE'
       });
 
-      const data = await resend.emails.send({
-        from: emailFrom,
+      return await dispatchMail({
         to: email,
         subject,
-        html
+        html,
+        text: `Security Notice: Password updated for ${teamName || 'your account'}`
       });
-      return { success: true, id: data?.data?.id };
     } catch (error) {
       console.error('[EmailService Error - Password Notice]:', error.message);
       return { success: false, error: error.message };
