@@ -56,6 +56,14 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
 class EmailService {
   // 1. Send OTP Verification Code
   static async sendOtpEmail({ email, name, otp }) {
+    // Always print OTP in console for reliable development / backup access
+    console.log(`\n======================================================`);
+    console.log(`🔐 [SKOUTED LEAGUE OTP DISPATCH]`);
+    console.log(`👤 Recipient: ${name || 'Team Manager'} <${email}>`);
+    console.log(`🔑 OTP CODE:  >>> ${otp} <<<`);
+    console.log(`⏱ Valid for: 10 minutes`);
+    console.log(`======================================================\n`);
+
     try {
       const subject = `🔐 Your Skouted League Verification Code: ${otp}`;
       const content = `
@@ -81,17 +89,23 @@ class EmailService {
         badgeText: 'SECURITY VERIFICATION'
       });
 
-      const data = await resend.emails.send({
+      const res = await resend.emails.send({
         from: emailFrom,
         to: email,
         subject,
         html
       });
-      console.log(`[EmailService]: OTP sent to ${email} (ID: ${data?.data?.id || 'ok'})`);
-      return { success: true, id: data?.data?.id };
+
+      if (res.error) {
+        console.warn(`[EmailService Warning - Resend Provider Error]: ${res.error.message || JSON.stringify(res.error)}`);
+        return { success: false, error: res.error.message, otp };
+      }
+
+      console.log(`[EmailService]: OTP sent to ${email} (ID: ${res.data?.id || 'ok'})`);
+      return { success: true, id: res.data?.id, otp };
     } catch (error) {
       console.error('[EmailService Error - OTP]:', error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: error.message, otp };
     }
   }
 

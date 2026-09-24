@@ -3,6 +3,7 @@ const router = express.Router();
 const Team = require('../models/Team');
 const Player = require('../models/Player');
 const Fixture = require('../models/Fixture');
+const User = require('../models/User');
 const EmailService = require('../services/emailService');
 const { requireAdmin } = require('../middleware/authMiddleware');
 const { upload } = require('../services/cloudinary');
@@ -30,11 +31,23 @@ router.get('/teams', async (req, res) => {
 
     const teams = await Team.find(filter).sort({ name: 1 });
 
-    // Enhance each team with squad count and upcoming lineup submission status
+    // Enhance each team with squad count, manager user verification status, and upcoming lineup status
     const teamsWithDetails = await Promise.all(
       teams.map(async (t) => {
         const squadCount = await Player.countDocuments({ team: t._id });
         
+        // Find associated manager user account
+        let managerUser = null;
+        if (t.manager) {
+          managerUser = await User.findById(t.manager).select('name email phone isVerified role');
+        } else if (t.managerEmail) {
+          managerUser = await User.findOne({ email: t.managerEmail.toLowerCase().trim() }).select('name email phone isVerified role');
+        } else {
+          managerUser = await User.findOne({ team: t._id }).select('name email phone isVerified role');
+        }
+
+        const isVerified = t.status === 'Verified' && (managerUser ? managerUser.isVerified : true);
+
         // Find next upcoming fixture for this team
         const nextFixture = await Fixture.findOne({
           $or: [{ homeTeam: t._id }, { awayTeam: t._id }],
@@ -61,7 +74,16 @@ router.get('/teams', async (req, res) => {
           squadCount,
           lineupStatus,
           pendingFixtureId,
-          nextFixture
+          nextFixture,
+          managerUser: managerUser ? {
+            _id: managerUser._id,
+            name: managerUser.name,
+            email: managerUser.email,
+            phone: managerUser.phone,
+            isVerified: managerUser.isVerified,
+            role: managerUser.role
+          } : null,
+          isVerified
         };
       })
     );
@@ -327,6 +349,123 @@ router.post('/fixtures/:id/remind-lineup', async (req, res) => {
     });
   } catch (err) {
     console.error('[Admin Lineup Reminder Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. POST /api/admin/teams/:id/verify (and PATCH /api/admin/teams/:id/status)
+// Directly verify a team and its manager without needing OTP
+router.post('/teams/:id/verify', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status = 'Verified' } = req.body;
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.status = status;
+    await team.save();
+
+    const isVerifiedBool = status === 'Verified';
+
+    // Query for manager user(s) associated with this team
+    const userQueries = [];
+    if (team.manager) userQueries.push({ _id: team.manager });
+    userQueries.push({ team: team._id });
+    if (team.managerEmail) {
+      userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+    }
+
+    const updatedUsers = await User.updateMany(
+      { $or: userQueries },
+      {
+        $set: {
+          isVerified: isVerifiedBool,
+          verificationOtp: null,
+          otpExpiresAt: null,
+          team: team._id
+        }
+      }
+    );
+
+    // If team.manager was not set, link it to the matching user
+    if (!team.manager) {
+      const foundUser = await User.findOne({ $or: userQueries });
+      if (foundUser) {
+        team.manager = foundUser._id;
+        await team.save();
+      }
+    }
+
+    const updatedTeam = await Team.findById(id);
+
+    res.json({
+      success: true,
+      message: isVerifiedBool
+        ? `Team "${team.name}" and manager account successfully verified! The manager can now login directly without OTP.`
+        : `Team "${team.name}" status updated to "${status}".`,
+      data: {
+        team: updatedTeam,
+        isVerified: isVerifiedBool,
+        usersUpdated: updatedUsers.modifiedCount
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Verify Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.patch('/teams/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    if (!status || !['Verified', 'Pending Verification', 'Suspended'].includes(status)) {
+      return res.status(400).json({ success: false, error: 'Valid status is required (Verified, Pending Verification, Suspended)' });
+    }
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.status = status;
+    await team.save();
+
+    const isVerifiedBool = status === 'Verified';
+
+    const userQueries = [];
+    if (team.manager) userQueries.push({ _id: team.manager });
+    userQueries.push({ team: team._id });
+    if (team.managerEmail) {
+      userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+    }
+
+    await User.updateMany(
+      { $or: userQueries },
+      {
+        $set: {
+          isVerified: isVerifiedBool,
+          verificationOtp: null,
+          otpExpiresAt: null,
+          team: team._id
+        }
+      }
+    );
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" status updated to "${status}".`,
+      data: {
+        team,
+        isVerified: isVerifiedBool
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Update Team Status Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
