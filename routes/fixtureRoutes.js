@@ -385,4 +385,223 @@ router.post('/recalculate', requireAdmin, async (req, res) => {
   }
 });
 
+// Helper for round-robin scheduling (Berger rotation method)
+function buildRoundRobinSchedule(teamsList) {
+  const teams = [...teamsList];
+  if (teams.length < 2) return [];
+
+  const isOdd = teams.length % 2 !== 0;
+  if (isOdd) {
+    teams.push(null); // Ghost team for BYE
+  }
+
+  const n = teams.length;
+  const numRounds = n - 1;
+  const matchesPerRound = n / 2;
+  const rounds = [];
+
+  for (let r = 0; r < numRounds; r++) {
+    const roundMatches = [];
+    for (let m = 0; m < matchesPerRound; m++) {
+      const teamA = teams[m];
+      const teamB = teams[n - 1 - m];
+
+      if (teamA !== null && teamB !== null) {
+        // Alternate home/away based on round to balance home advantage
+        if (r % 2 === 1) {
+          roundMatches.push({ homeTeam: teamB, awayTeam: teamA });
+        } else {
+          roundMatches.push({ homeTeam: teamA, awayTeam: teamB });
+        }
+      }
+    }
+    rounds.push(roundMatches);
+
+    // Rotate array: keep teams[0] fixed, rotate the rest
+    const last = teams.pop();
+    teams.splice(1, 0, last);
+  }
+
+  return rounds;
+}
+
+// 10. POST /api/fixtures/auto-generate - Automated Tournament Scheduling Engine
+router.post('/auto-generate', requireAdmin, async (req, res) => {
+  try {
+    const {
+      mode = 'BY_GROUPS', // 'BY_GROUPS' | 'ALL_IN_ONE' | 'KNOCKOUT'
+      startDate,
+      daysBetweenRounds = 7,
+      timeSlots = ['10:00', '13:00', '16:00', '18:30'],
+      venues = ['Legacy Arena Pitch 1', 'Legacy Arena Pitch 2', 'National Stadium Arena'],
+      clearExistingUpcoming = false,
+      autoNotifyManagers = false
+    } = req.body;
+
+    const baseDate = startDate ? new Date(startDate) : new Date();
+
+    // 1. Fetch eligible teams
+    const allTeams = await Team.find().sort({ name: 1 });
+    if (allTeams.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'At least 2 registered teams are required to generate an automated tournament schedule.'
+      });
+    }
+
+    // 2. Clear existing upcoming fixtures if requested
+    let deletedCount = 0;
+    if (clearExistingUpcoming) {
+      const delRes = await Fixture.deleteMany({ status: 'UPCOMING' });
+      deletedCount = delRes.deletedCount;
+    }
+
+    const scheduledFixtures = [];
+
+    if (mode === 'BY_GROUPS') {
+      // Group teams by their designated group
+      const groupsMap = {};
+      allTeams.forEach(t => {
+        const grp = t.group || 'Group A';
+        if (!groupsMap[grp]) groupsMap[grp] = [];
+        groupsMap[grp].push(t);
+      });
+
+      const groupNames = Object.keys(groupsMap).sort();
+      
+      // Calculate max rounds across all groups
+      let maxRounds = 0;
+      const groupRoundsMap = {};
+      groupNames.forEach(grp => {
+        const rounds = buildRoundRobinSchedule(groupsMap[grp]);
+        groupRoundsMap[grp] = rounds;
+        if (rounds.length > maxRounds) maxRounds = rounds.length;
+      });
+
+      // Distribute rounds across matchday dates
+      for (let roundIdx = 0; roundIdx < maxRounds; roundIdx++) {
+        const roundDate = new Date(baseDate);
+        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
+        const dateStr = roundDate.toISOString().split('T')[0];
+
+        let matchSlotIdx = 0;
+
+        groupNames.forEach(grp => {
+          const groupRounds = groupRoundsMap[grp];
+          if (roundIdx < groupRounds.length) {
+            const matches = groupRounds[roundIdx];
+            matches.forEach(m => {
+              const time = timeSlots[matchSlotIdx % timeSlots.length];
+              const venue = venues[matchSlotIdx % venues.length];
+              matchSlotIdx++;
+
+              scheduledFixtures.push({
+                homeTeam: m.homeTeam._id,
+                awayTeam: m.awayTeam._id,
+                stage: `${grp} - Matchday ${roundIdx + 1}`,
+                date: dateStr,
+                time: time,
+                venue: venue,
+                status: 'UPCOMING'
+              });
+            });
+          }
+        });
+      }
+    } else if (mode === 'ALL_IN_ONE') {
+      // All-play-all full championship schedule
+      const rounds = buildRoundRobinSchedule(allTeams);
+      rounds.forEach((matches, roundIdx) => {
+        const roundDate = new Date(baseDate);
+        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
+        const dateStr = roundDate.toISOString().split('T')[0];
+
+        matches.forEach((m, matchIdx) => {
+          const time = timeSlots[matchIdx % timeSlots.length];
+          const venue = venues[matchIdx % venues.length];
+
+          scheduledFixtures.push({
+            homeTeam: m.homeTeam._id,
+            awayTeam: m.awayTeam._id,
+            stage: `Matchday ${roundIdx + 1}`,
+            date: dateStr,
+            time: time,
+            venue: venue,
+            status: 'UPCOMING'
+          });
+        });
+      });
+    } else if (mode === 'KNOCKOUT') {
+      // Single elimination tournament bracket round 1
+      const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
+      const half = Math.floor(shuffled.length / 2);
+      const dateStr = baseDate.toISOString().split('T')[0];
+
+      for (let i = 0; i < half; i++) {
+        const time = timeSlots[i % timeSlots.length];
+        const venue = venues[i % venues.length];
+        scheduledFixtures.push({
+          homeTeam: shuffled[i * 2]._id,
+          awayTeam: shuffled[i * 2 + 1]._id,
+          stage: half >= 4 ? 'Quarter-Final' : half === 2 ? 'Semi-Final' : 'Grand Final',
+          date: dateStr,
+          time: time,
+          venue: venue,
+          status: 'UPCOMING'
+        });
+      }
+    }
+
+    if (scheduledFixtures.length === 0) {
+      return res.status(400).json({ success: false, error: 'No matchups could be generated with the current team roster.' });
+    }
+
+    // 3. Save all fixtures in database
+    const createdDocs = await Fixture.insertMany(scheduledFixtures);
+
+    // 4. Populate with team details
+    const populated = await Fixture.find({ _id: { $in: createdDocs.map(d => d._id) } })
+      .populate('homeTeam awayTeam')
+      .sort({ date: 1, time: 1 });
+
+    // 5. Broadcast live update to all connected screens
+    populated.forEach(f => broadcastMatchUpdate(f));
+
+    // 6. Optional automated manager notification
+    let notifiedCount = 0;
+    if (autoNotifyManagers) {
+      for (const f of populated) {
+        if (f.homeTeam?.managerEmail || f.awayTeam?.managerEmail) {
+          EmailService.sendFixtureAnnouncement({
+            homeManagerEmail: f.homeTeam?.managerEmail,
+            awayManagerEmail: f.awayTeam?.managerEmail,
+            homeTeamName: f.homeTeam?.name,
+            awayTeamName: f.awayTeam?.name,
+            date: f.date,
+            time: f.time,
+            venue: f.venue,
+            stage: f.stage
+          }).catch(e => console.error('[Auto Scheduler Email Error]:', e.message));
+          notifiedCount++;
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: `Tournament scheduling completed! ${createdDocs.length} official match fixture(s) automatically created across ${allTeams.length} teams.`,
+      data: {
+        fixturesCount: createdDocs.length,
+        deletedOldUpcomingCount: deletedCount,
+        teamsCount: allTeams.length,
+        notifiedCount,
+        fixtures: populated
+      }
+    });
+  } catch (err) {
+    console.error('[Auto Generate Fixtures Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
