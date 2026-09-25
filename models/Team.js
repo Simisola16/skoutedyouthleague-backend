@@ -26,10 +26,28 @@ const teamSchema = new mongoose.Schema({
     type: String,
     default: 'Group A'
   },
+  verificationStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
+  verifiedAt: {
+    type: Date,
+    default: null
+  },
+  verifiedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  rejectionReason: {
+    type: String,
+    default: ''
+  },
   status: {
     type: String,
     enum: ['Verified', 'Pending Verification', 'Suspended'],
-    default: 'Verified'
+    default: 'Pending Verification'
   },
   manager: {
     type: mongoose.Schema.Types.ObjectId,
@@ -87,5 +105,6 @@ teamSchema.virtual('squad', {
 teamSchema.index({ shortCode: 1 }, { unique: true });
 teamSchema.index({ 'stats.points': -1, 'stats.goalDifference': -1, 'stats.goalsFor': -1 });
 teamSchema.index({ manager: 1 });
+teamSchema.index({ verificationStatus: 1 });
 
 module.exports = mongoose.model('Team', teamSchema);

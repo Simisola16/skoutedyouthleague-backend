@@ -162,9 +162,22 @@ router.get('/roster', async (req, res) => {
   }
 });
 
-// POST add player to squad
-router.post('/roster', upload.single('photo'), async (req, res) => {
+// POST add player to squad (/api/team/roster and /api/team/players)
+const handleAddPlayer = async (req, res) => {
   try {
+    const team = await Team.findById(req.teamId);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    const isApproved = team.verificationStatus === 'approved' || (team.status === 'Verified' && team.verificationStatus !== 'rejected' && team.verificationStatus !== 'pending');
+    if (!isApproved) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your team has not yet been verified by the administrator. Player registration is locked.'
+      });
+    }
+
     const currentCount = await Player.countDocuments({ team: req.teamId });
     if (currentCount >= MAX_SQUAD_LIMIT) {
       return res.status(400).json({
@@ -268,7 +281,10 @@ router.post('/roster', upload.single('photo'), async (req, res) => {
     console.error('[Add Player Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
-});
+};
+
+router.post('/roster', upload.single('photo'), handleAddPlayer);
+router.post('/players', upload.single('photo'), handleAddPlayer);
 
 // PUT edit player
 router.put('/roster/:playerId', upload.single('photo'), async (req, res) => {

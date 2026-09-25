@@ -507,6 +507,101 @@ class EmailService {
       return { success: false, error: error.message };
     }
   }
+
+  // 6. Team Registration Approval Notification
+  static async sendTeamApprovalEmail({ managerEmail, managerName, teamName }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const subject = `🎉 Congratulations! ${teamName} Approved for Skouted Youth League Championship`;
+      const content = `
+        <h2 style="color:#00E676; font-size:20px; margin-top:0; font-weight:900;">Official Club Accreditation Approved</h2>
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
+          Congratulations! Your team <strong style="color:#00E676;">${teamName}</strong> has been officially reviewed and approved by league administrators for the <strong>Skouted Youth League Championship</strong>.
+        </p>
+        <div class="highlight-box" style="border-left-color: #00E676;">
+          <p style="margin:0; font-size:14px; color:#FFFFFF; font-weight:700;">
+            🚀 Your squad builder and player registration gates are now fully unlocked!
+          </p>
+          <p style="margin:8px 0 0 0; font-size:12px; color:#94A3B8;">
+            You can now log in to your Team Manager Dashboard to register your squad of up to 25 players, assign squad numbers, upload photos, and prepare for upcoming matchday lineups.
+          </p>
+        </div>
+        <div style="text-align:center; margin:24px 0;">
+          <a href="https://skoutedyouthleague.vercel.app/team/login" class="btn" style="color:#07120B !important;">
+            Log In to Team Dashboard &rarr;
+          </a>
+        </div>
+        <p style="color:#64748B; font-size:12px; text-align:center;">
+          If you have any questions regarding player eligibility or tournament rules, please reply directly to this email.
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: 'Club Registration Approved',
+        preheader: `Congratulations! ${teamName} is approved for Skouted Youth League Championship.`,
+        content,
+        badgeText: 'CLUB VERIFICATION APPROVED'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Congratulations! Your team ${teamName} has been approved for Skouted Youth League Championship. You can now log in to your dashboard and register your squad: https://skoutedyouthleague.vercel.app/team/login`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Team Approval]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // 7. Team Registration Rejection Notification
+  static async sendTeamRejectionEmail({ managerEmail, managerName, teamName, rejectionReason }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const subject = `⚠️ Notice: ${teamName} Registration Status Update - Skouted League`;
+      const reasonDisplay = rejectionReason || 'Your team registration could not be approved due to incomplete or unverified club accreditation details.';
+
+      const content = `
+        <h2 style="color:#FF4B4B; font-size:18px; margin-top:0;">Team Registration Review Notice</h2>
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
+          Thank you for applying to participate with <strong style="color:#FFFFFF;">${teamName}</strong> in the Skouted Youth League.
+        </p>
+        <div class="highlight-box" style="border-left-color: #FF4B4B; background-color: rgba(255, 75, 75, 0.08);">
+          <div style="font-size:12px; font-weight:800; color:#FF4B4B; text-transform:uppercase; margin-bottom:4px;">
+            Review Decision & Reason
+          </div>
+          <p style="margin:0; font-size:13px; color:#F87171;">
+            ${reasonDisplay}
+          </p>
+        </div>
+        <p style="color:#94A3B8; font-size:13px; line-height:1.6;">
+          Player registration remains locked for your club at this time. If you believe this is an error or would like to submit updated club documents, please contact tournament administration.
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: 'Team Registration Status Update',
+        preheader: `Update regarding your club registration for ${teamName}.`,
+        content,
+        badgeText: 'REGISTRATION STATUS'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Notice: Your team registration for ${teamName} was not approved. Reason: ${reasonDisplay}`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Team Rejection]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = EmailService;

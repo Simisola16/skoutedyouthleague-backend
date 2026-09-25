@@ -12,14 +12,24 @@ const { upload } = require('../services/cloudinary');
 router.use(requireAdmin);
 
 // 1. GET /api/admin/teams
-// Directory of all teams with search, group filter, squad count, and lineup status
+// Directory of all teams with search, group filter, status filter, squad count, and lineup status
 router.get('/teams', async (req, res) => {
   try {
-    const { search, group } = req.query;
+    const { search, group, status, verificationStatus } = req.query;
     const filter = {};
 
     if (group && group !== 'All') {
       filter.group = group;
+    }
+
+    if (verificationStatus && verificationStatus !== 'All') {
+      filter.verificationStatus = verificationStatus.toLowerCase();
+    } else if (status && status !== 'All') {
+      if (['pending', 'approved', 'rejected'].includes(status.toLowerCase())) {
+        filter.verificationStatus = status.toLowerCase();
+      } else {
+        filter.status = status;
+      }
     }
 
     if (search) {
@@ -46,7 +56,8 @@ router.get('/teams', async (req, res) => {
           managerUser = await User.findOne({ team: t._id }).select('name email phone isVerified role');
         }
 
-        const isVerified = t.status === 'Verified' && (managerUser ? managerUser.isVerified : true);
+        const verificationStatusResolved = t.verificationStatus || (t.status === 'Verified' ? 'approved' : 'pending');
+        const isVerified = verificationStatusResolved === 'approved' && (managerUser ? managerUser.isVerified : true);
 
         // Find next upcoming fixture for this team
         const nextFixture = await Fixture.findOne({
@@ -71,6 +82,10 @@ router.get('/teams', async (req, res) => {
 
         return {
           ...t.toObject(),
+          verificationStatus: verificationStatusResolved,
+          verifiedAt: t.verifiedAt,
+          verifiedBy: t.verifiedBy,
+          rejectionReason: t.rejectionReason || '',
           squadCount,
           lineupStatus,
           pendingFixtureId,
@@ -365,8 +380,169 @@ router.post('/fixtures/:id/remind-lineup', async (req, res) => {
   }
 });
 
-// 5. POST /api/admin/teams/:id/verify (and PATCH /api/admin/teams/:id/status)
-// Directly verify a team and its manager without needing OTP
+// 5. POST /api/admin/teams/:id/approve - Approve Team & Dispatch Resend Email
+router.post('/teams/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.verificationStatus = 'approved';
+    team.status = 'Verified';
+    team.verifiedAt = new Date();
+    team.verifiedBy = req.user?.id || null;
+    team.rejectionReason = '';
+    await team.save();
+
+    // Query for manager user(s) associated with this team to verify them
+    const userQueries = [];
+    if (team.manager) userQueries.push({ _id: team.manager });
+    userQueries.push({ team: team._id });
+    if (team.managerEmail) {
+      userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+    }
+
+    const updatedUsers = await User.updateMany(
+      { $or: userQueries },
+      {
+        $set: {
+          isVerified: true,
+          verificationOtp: null,
+          otpExpiresAt: null,
+          team: team._id
+        }
+      }
+    );
+
+    let managerUser = null;
+    if (team.manager) {
+      managerUser = await User.findById(team.manager);
+    }
+    if (!managerUser && userQueries.length > 0) {
+      managerUser = await User.findOne({ $or: userQueries });
+      if (managerUser) {
+        team.manager = managerUser._id;
+        await team.save();
+      }
+    }
+
+    const managerEmail = managerUser?.email || team.managerEmail;
+    const managerName = managerUser?.name || team.managerName || 'Team Manager';
+
+    // Dispatch automated approval email via Resend
+    let emailResult = { success: false };
+    if (managerEmail) {
+      emailResult = await EmailService.sendTeamApprovalEmail({
+        managerEmail,
+        managerName,
+        teamName: team.name
+      });
+    }
+
+    const updatedTeam = await Team.findById(id);
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" has been approved! Manager has been notified via email.`,
+      data: {
+        team: updatedTeam,
+        emailSent: emailResult.success
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Approve Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. POST /api/admin/teams/:id/reject - Reject Team with Reason & Dispatch Resend Email
+router.post('/teams/:id/reject', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { rejectionReason } = req.body;
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    const reason = rejectionReason ? rejectionReason.trim() : 'Registration details did not meet the competition guidelines or required verification criteria.';
+
+    team.verificationStatus = 'rejected';
+    team.status = 'Pending Verification';
+    team.rejectionReason = reason;
+    team.verifiedAt = null;
+    team.verifiedBy = null;
+    await team.save();
+
+    // Query for manager email
+    const userQueries = [];
+    if (team.manager) userQueries.push({ _id: team.manager });
+    userQueries.push({ team: team._id });
+    if (team.managerEmail) {
+      userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+    }
+
+    const managerUser = await User.findOne({ $or: userQueries });
+    const managerEmail = managerUser?.email || team.managerEmail;
+    const managerName = managerUser?.name || team.managerName || 'Team Manager';
+
+    let emailResult = { success: false };
+    if (managerEmail) {
+      emailResult = await EmailService.sendTeamRejectionEmail({
+        managerEmail,
+        managerName,
+        teamName: team.name,
+        rejectionReason: reason
+      });
+    }
+
+    const updatedTeam = await Team.findById(id);
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" registration marked as rejected. Notice email dispatched to manager.`,
+      data: {
+        team: updatedTeam,
+        emailSent: emailResult.success
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Reject Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. POST /api/admin/teams/:id/revoke - Revoke / Return Team to Pending Verification
+router.post('/teams/:id/revoke', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.verificationStatus = 'pending';
+    team.status = 'Pending Verification';
+    team.verifiedAt = null;
+    team.verifiedBy = null;
+    team.rejectionReason = '';
+    await team.save();
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" approval revoked and returned to pending review.`,
+      data: { team }
+    });
+  } catch (err) {
+    console.error('[Admin Revoke Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. POST /api/admin/teams/:id/verify (Legacy direct verify compatibility)
 router.post('/teams/:id/verify', async (req, res) => {
   try {
     const { id } = req.params;
@@ -377,10 +553,20 @@ router.post('/teams/:id/verify', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Team not found' });
     }
 
-    team.status = status;
+    const isApproved = status === 'Verified' || status === 'approved';
+    team.status = isApproved ? 'Verified' : status === 'Suspended' ? 'Suspended' : 'Pending Verification';
+    team.verificationStatus = isApproved ? 'approved' : status === 'rejected' ? 'rejected' : 'pending';
+    if (isApproved) {
+      team.verifiedAt = new Date();
+      team.verifiedBy = req.user?.id || null;
+      team.rejectionReason = '';
+    } else {
+      team.verifiedAt = null;
+      team.verifiedBy = null;
+    }
     await team.save();
 
-    const isVerifiedBool = status === 'Verified';
+    const isVerifiedBool = isApproved;
 
     // Query for manager user(s) associated with this team
     const userQueries = [];
@@ -416,7 +602,7 @@ router.post('/teams/:id/verify', async (req, res) => {
     res.json({
       success: true,
       message: isVerifiedBool
-        ? `Team "${team.name}" and manager account successfully verified! The manager can now login directly without OTP.`
+        ? `Team "${team.name}" and manager account successfully verified! The manager can now login directly and register squad players.`
         : `Team "${team.name}" status updated to "${status}".`,
       data: {
         team: updatedTeam,
@@ -433,21 +619,44 @@ router.post('/teams/:id/verify', async (req, res) => {
 router.patch('/teams/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body;
-
-    if (!status || !['Verified', 'Pending Verification', 'Suspended'].includes(status)) {
-      return res.status(400).json({ success: false, error: 'Valid status is required (Verified, Pending Verification, Suspended)' });
-    }
+    const { status, verificationStatus } = req.body;
 
     const team = await Team.findById(id);
     if (!team) {
       return res.status(404).json({ success: false, error: 'Team not found' });
     }
 
-    team.status = status;
+    if (verificationStatus) {
+      team.verificationStatus = verificationStatus;
+      if (verificationStatus === 'approved') {
+        team.status = 'Verified';
+        team.verifiedAt = new Date();
+        team.verifiedBy = req.user?.id || null;
+      } else if (verificationStatus === 'rejected') {
+        team.status = 'Pending Verification';
+        team.verifiedAt = null;
+        team.verifiedBy = null;
+      } else {
+        team.status = 'Pending Verification';
+        team.verifiedAt = null;
+        team.verifiedBy = null;
+      }
+    } else if (status) {
+      team.status = status;
+      if (status === 'Verified') {
+        team.verificationStatus = 'approved';
+        team.verifiedAt = new Date();
+        team.verifiedBy = req.user?.id || null;
+      } else {
+        team.verificationStatus = 'pending';
+        team.verifiedAt = null;
+        team.verifiedBy = null;
+      }
+    }
+
     await team.save();
 
-    const isVerifiedBool = status === 'Verified';
+    const isVerifiedBool = team.verificationStatus === 'approved';
 
     const userQueries = [];
     if (team.manager) userQueries.push({ _id: team.manager });
@@ -470,7 +679,7 @@ router.patch('/teams/:id/status', async (req, res) => {
 
     res.json({
       success: true,
-      message: `Team "${team.name}" status updated to "${status}".`,
+      message: `Team "${team.name}" status updated to "${team.verificationStatus}".`,
       data: {
         team,
         isVerified: isVerifiedBool

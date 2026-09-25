@@ -63,6 +63,11 @@ router.post('/', upload.single('crest'), async (req, res) => {
       managerName: managerName || '',
       managerEmail: managerEmail || '',
       managerPhone: managerPhone || '',
+      verificationStatus: 'pending',
+      status: 'Pending Verification',
+      verifiedAt: null,
+      verifiedBy: null,
+      rejectionReason: '',
       logo
     });
 
@@ -86,6 +91,14 @@ router.post('/:id/players', upload.single('photo'), async (req, res) => {
     const team = await Team.findById(req.params.id);
     if (!team) {
       return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    const isApproved = team.verificationStatus === 'approved' || (team.status === 'Verified' && team.verificationStatus !== 'rejected' && team.verificationStatus !== 'pending');
+    if (!isApproved) {
+      return res.status(403).json({
+        success: false,
+        error: 'Your team has not yet been verified by the administrator. Player registration is locked.'
+      });
     }
 
     const { firstName, lastName, jerseyNumber, position, subPosition, preferredFoot, age, dateOfBirth } = req.body;
