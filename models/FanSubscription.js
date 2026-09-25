@@ -10,7 +10,12 @@ const fanSubscriptionSchema = new mongoose.Schema({
   team: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Team',
-    required: true
+    required: false,
+    default: null
+  },
+  allMatches: {
+    type: Boolean,
+    default: false
   },
   notifyGoals: {
     type: Boolean,
@@ -28,8 +33,9 @@ const fanSubscriptionSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Compound unique index so one email can only subscribe to a team once
-fanSubscriptionSchema.index({ email: 1, team: 1 }, { unique: true });
+// Index for email queries and subscriptions
+fanSubscriptionSchema.index({ email: 1, team: 1 });
 fanSubscriptionSchema.index({ team: 1, notifyGoals: 1 });
+fanSubscriptionSchema.index({ allMatches: 1, notifyGoals: 1 });
 
 module.exports = mongoose.model('FanSubscription', fanSubscriptionSchema);

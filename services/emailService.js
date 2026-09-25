@@ -444,19 +444,23 @@ class EmailService {
         badgeText: 'LIVE GOAL ALERT'
       });
 
-      // Split into chunks of 50 to respect provider limits
-      const validEmails = Array.isArray(fanEmails) ? fanEmails.filter(Boolean) : [fanEmails].filter(Boolean);
-      for (let i = 0; i < validEmails.length; i += 50) {
-        const batch = validEmails.slice(i, i + 50);
-        await dispatchMail({
-          to: batch,
+      const validEmails = [...new Set(Array.isArray(fanEmails) ? fanEmails.filter(Boolean) : [fanEmails].filter(Boolean))];
+      console.log(`[EmailService]: Dispatching Fan Goal Alert to ${validEmails.length} recipient(s):`, validEmails);
+
+      const sendPromises = validEmails.map(email =>
+        dispatchMail({
+          to: email,
           subject,
           html,
           text: `GOAL! ${playerName} scores in ${minute}'! ${scoringTeamName} [${homeScore}-${awayScore}] ${opponentTeamName}`
-        });
-      }
+        })
+      );
 
-      return { success: true };
+      const results = await Promise.allSettled(sendPromises);
+      const successful = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+      console.log(`[EmailService]: Goal alert results: ${successful}/${validEmails.length} successfully delivered.`);
+
+      return { success: true, count: successful };
     } catch (error) {
       console.error('[EmailService Error - Fan Goal Alert]:', error.message);
       return { success: false, error: error.message };

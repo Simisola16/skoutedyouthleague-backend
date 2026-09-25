@@ -5,6 +5,7 @@ const MatchEvent = require('../models/MatchEvent');
 const Team = require('../models/Team');
 const Player = require('../models/Player');
 const FanSubscription = require('../models/FanSubscription');
+const User = require('../models/User');
 const EmailService = require('../services/emailService');
 const { broadcastMatchUpdate, broadcastMatchEvent, broadcastStandingsUpdate } = require('../services/socketService');
 const { requireAdmin, requireOfficialOrAdmin } = require('../middleware/authMiddleware');
@@ -159,17 +160,32 @@ router.post('/', requireAdmin, async (req, res) => {
 
     const populated = await Fixture.findById(fixture._id).populate('homeTeam awayTeam');
 
-    // Trigger fixture announcement email to both managers
-    if (populated.homeTeam?.managerEmail || populated.awayTeam?.managerEmail) {
+    // Trigger fixture announcement email to both managers (with fallback to User accounts)
+    let homeEmail = populated.homeTeam?.managerEmail;
+    let awayEmail = populated.awayTeam?.managerEmail;
+
+    if (!homeEmail && populated.homeTeam?._id) {
+      const homeMgr = await User.findOne({ team: populated.homeTeam._id });
+      if (homeMgr) homeEmail = homeMgr.email;
+    }
+    if (!awayEmail && populated.awayTeam?._id) {
+      const awayMgr = await User.findOne({ team: populated.awayTeam._id });
+      if (awayMgr) awayEmail = awayMgr.email;
+    }
+
+    if (homeEmail || awayEmail) {
+      console.log(`[Fixture Dispatch]: Sending match notice to Home: ${homeEmail || 'None'}, Away: ${awayEmail || 'None'}`);
       EmailService.sendFixtureAnnouncement({
-        homeManagerEmail: populated.homeTeam.managerEmail,
-        awayManagerEmail: populated.awayTeam.managerEmail,
-        homeTeamName: populated.homeTeam.name,
-        awayTeamName: populated.awayTeam.name,
+        homeManagerEmail: homeEmail,
+        awayManagerEmail: awayEmail,
+        homeTeamName: populated.homeTeam?.name,
+        awayTeamName: populated.awayTeam?.name,
         date: populated.date,
         time: populated.time,
         venue: populated.venue,
         stage: populated.stage
+      }).then(res => {
+        console.log('[Fixture Notice Sent Result]:', res);
       }).catch(e => console.error('[Fixture Email Notice Error]:', e.message));
 
       populated.scheduledNoticeSent = true;
@@ -267,7 +283,7 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
 
     // If GOAL, automatically increment score and player stats
     if (type === 'GOAL') {
-      const isHome = fixture.homeTeam._id.toString() === teamId.toString();
+      const isHome = teamId ? fixture.homeTeam._id.toString() === teamId.toString() : true;
       if (isHome) {
         fixture.homeScore += 1;
       } else {
@@ -292,9 +308,19 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
         const scoringPlayer = playerId ? await Player.findById(playerId) : null;
         const playerName = scoringPlayer ? `${scoringPlayer.firstName} ${scoringPlayer.lastName}` : scoringTeam.name;
 
-        // Fetch fans who subscribed to this scoring team
-        const fanSubs = await FanSubscription.find({ team: scoringTeam._id, notifyGoals: true });
-        const emails = fanSubs.map(f => f.email);
+        // Fetch fans who subscribed to either team in this match, OR subscribed to all matches
+        const fanSubs = await FanSubscription.find({
+          notifyGoals: true,
+          $or: [
+            { team: scoringTeam._id },
+            { team: opponentTeam._id },
+            { allMatches: true },
+            { team: null }
+          ]
+        });
+
+        const emails = [...new Set(fanSubs.map(f => f.email?.toLowerCase().trim()).filter(Boolean))];
+        console.log(`[Fan Goal Dispatch]: Found ${emails.length} subscriber(s) for ${scoringTeam.name} vs ${opponentTeam.name}:`, emails);
 
         if (emails.length > 0) {
           EmailService.sendFanGoalAlert({
@@ -306,13 +332,15 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
             homeScore: fixture.homeScore,
             awayScore: fixture.awayScore,
             isHomeScoring: isHome
+          }).then(res => {
+            console.log('[Fan Goal Email Sent Result]:', res);
           }).catch(e => console.error('[Fan Goal Email Error]:', e.message));
         }
       } catch (emailErr) {
         console.error('[Goal Email Trigger Error]:', emailErr.message);
       }
     } else if (type === 'OWN_GOAL') {
-      const isHome = fixture.homeTeam._id.toString() === teamId.toString();
+      const isHome = teamId ? fixture.homeTeam._id.toString() === teamId.toString() : true;
       // Own goal goes to the opponent
       if (isHome) {
         fixture.awayScore += 1;
@@ -321,6 +349,44 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
       }
       event.scoreAtEvent = { home: fixture.homeScore, away: fixture.awayScore };
       await fixture.save();
+
+      // ASYNC FAN GOAL EMAIL DISPATCH (OWN GOAL)
+      try {
+        const creditedTeam = isHome ? fixture.awayTeam : fixture.homeTeam;
+        const concedingTeam = isHome ? fixture.homeTeam : fixture.awayTeam;
+        const ogPlayer = playerId ? await Player.findById(playerId) : null;
+        const playerName = ogPlayer ? `${ogPlayer.firstName} ${ogPlayer.lastName} (O.G.)` : `${concedingTeam.name} (O.G.)`;
+
+        const fanSubs = await FanSubscription.find({
+          notifyGoals: true,
+          $or: [
+            { team: creditedTeam._id },
+            { team: concedingTeam._id },
+            { allMatches: true },
+            { team: null }
+          ]
+        });
+
+        const emails = [...new Set(fanSubs.map(f => f.email?.toLowerCase().trim()).filter(Boolean))];
+        console.log(`[Fan Own Goal Dispatch]: Found ${emails.length} subscriber(s) for ${creditedTeam.name} vs ${concedingTeam.name}:`, emails);
+
+        if (emails.length > 0) {
+          EmailService.sendFanGoalAlert({
+            fanEmails: emails,
+            scoringTeamName: creditedTeam.name,
+            opponentTeamName: concedingTeam.name,
+            playerName,
+            minute: event.minute,
+            homeScore: fixture.homeScore,
+            awayScore: fixture.awayScore,
+            isHomeScoring: !isHome
+          }).then(res => {
+            console.log('[Fan Own Goal Email Sent Result]:', res);
+          }).catch(e => console.error('[Fan Own Goal Email Error]:', e.message));
+        }
+      } catch (emailErr) {
+        console.error('[Goal Email Trigger Error - Own Goal]:', emailErr.message);
+      }
     } else if (type === 'YELLOW_CARD') {
       if (playerId) await Player.findByIdAndUpdate(playerId, { $inc: { 'stats.yellowCards': 1 } });
     } else if (type === 'RED_CARD') {
@@ -603,11 +669,20 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
     // 6. Optional automated manager notification
     let notifiedCount = 0;
     if (autoNotifyManagers) {
+      const allUsers = await User.find({ role: 'manager' });
+      const userEmailByTeamId = {};
+      allUsers.forEach(u => {
+        if (u.team) userEmailByTeamId[u.team.toString()] = u.email;
+      });
+
       for (const f of populated) {
-        if (f.homeTeam?.managerEmail || f.awayTeam?.managerEmail) {
+        const homeEmail = f.homeTeam?.managerEmail || (f.homeTeam?._id ? userEmailByTeamId[f.homeTeam._id.toString()] : null);
+        const awayEmail = f.awayTeam?.managerEmail || (f.awayTeam?._id ? userEmailByTeamId[f.awayTeam._id.toString()] : null);
+
+        if (homeEmail || awayEmail) {
           EmailService.sendFixtureAnnouncement({
-            homeManagerEmail: f.homeTeam?.managerEmail,
-            awayManagerEmail: f.awayTeam?.managerEmail,
+            homeManagerEmail: homeEmail,
+            awayManagerEmail: awayEmail,
             homeTeamName: f.homeTeam?.name,
             awayTeamName: f.awayTeam?.name,
             date: f.date,

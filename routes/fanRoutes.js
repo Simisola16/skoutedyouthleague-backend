@@ -3,13 +3,29 @@ const router = express.Router();
 const FanSubscription = require('../models/FanSubscription');
 const Team = require('../models/Team');
 
-// 1. Subscribe fan to team goal alerts
+// 1. Subscribe fan to team or all-tournament goal alerts
 router.post('/subscribe', async (req, res) => {
   try {
     const { email, teamId, notifyGoals = true, notifyKickoff = true } = req.body;
 
-    if (!email || !teamId) {
-      return res.status(400).json({ success: false, error: 'Email and team selection are required' });
+    if (!email) {
+      return res.status(400).json({ success: false, error: 'Email is required' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+
+    if (!teamId || teamId === 'ALL') {
+      const subscription = await FanSubscription.findOneAndUpdate(
+        { email: cleanEmail, allMatches: true },
+        { notifyGoals, notifyKickoff, notifyFT: true, allMatches: true, team: null },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      return res.json({
+        success: true,
+        message: 'Subscribed! You will receive instant goal alerts for all championship matches.',
+        data: subscription
+      });
     }
 
     const team = await Team.findById(teamId);
@@ -18,14 +34,14 @@ router.post('/subscribe', async (req, res) => {
     }
 
     const subscription = await FanSubscription.findOneAndUpdate(
-      { email: email.toLowerCase().trim(), team: teamId },
-      { notifyGoals, notifyKickoff, notifyFT: true },
+      { email: cleanEmail, team: teamId },
+      { notifyGoals, notifyKickoff, notifyFT: true, allMatches: false },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
     res.json({
       success: true,
-      message: `Subscribed! You will receive instant goal alerts whenever ${team.name} scores.`,
+      message: `Subscribed! You will receive instant goal alerts whenever ${team.name} plays or scores.`,
       data: subscription
     });
   } catch (err) {

@@ -303,10 +303,16 @@ router.post('/fixtures/:id/remind-lineup', async (req, res) => {
 
     // Check Home Team
     if (!teamId || teamId.toString() === fixture.homeTeam?._id.toString()) {
-      if (fixture.homeTeam?.managerEmail && !fixture.homeLineup?.isLocked) {
+      let homeManagerEmail = fixture.homeTeam?.managerEmail;
+      if (!homeManagerEmail && fixture.homeTeam?._id) {
+        const mgr = await User.findOne({ team: fixture.homeTeam._id });
+        if (mgr) homeManagerEmail = mgr.email;
+      }
+
+      if (homeManagerEmail && !fixture.homeLineup?.isLocked) {
         try {
           await EmailService.sendLineupUrgentReminder({
-            managerEmail: fixture.homeTeam.managerEmail,
+            managerEmail: homeManagerEmail,
             teamName: fixture.homeTeam.name,
             opponentName: fixture.awayTeam?.name,
             date: fixture.date,
@@ -323,10 +329,16 @@ router.post('/fixtures/:id/remind-lineup', async (req, res) => {
 
     // Check Away Team
     if (!teamId || teamId.toString() === fixture.awayTeam?._id.toString()) {
-      if (fixture.awayTeam?.managerEmail && !fixture.awayLineup?.isLocked) {
+      let awayManagerEmail = fixture.awayTeam?.managerEmail;
+      if (!awayManagerEmail && fixture.awayTeam?._id) {
+        const mgr = await User.findOne({ team: fixture.awayTeam._id });
+        if (mgr) awayManagerEmail = mgr.email;
+      }
+
+      if (awayManagerEmail && !fixture.awayLineup?.isLocked) {
         try {
           await EmailService.sendLineupUrgentReminder({
-            managerEmail: fixture.awayTeam.managerEmail,
+            managerEmail: awayManagerEmail,
             teamName: fixture.awayTeam.name,
             opponentName: fixture.homeTeam?.name,
             date: fixture.date,

@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const Fixture = require('../models/Fixture');
+const User = require('../models/User');
 const EmailService = require('./emailService');
 
 function startScheduler() {
@@ -33,10 +34,16 @@ function startScheduler() {
 
           let reminderSent = false;
 
-          // Check Home Team Lineup
-          if (!fixture.homeLineup?.isLocked && fixture.homeTeam?.managerEmail) {
+          // Check Home Team Lineup (with User email fallback)
+          let homeMgrEmail = fixture.homeTeam?.managerEmail;
+          if (!homeMgrEmail && fixture.homeTeam?._id) {
+            const u = await User.findOne({ team: fixture.homeTeam._id });
+            if (u) homeMgrEmail = u.email;
+          }
+
+          if (!fixture.homeLineup?.isLocked && homeMgrEmail) {
             await EmailService.sendLineupReminderEmail({
-              managerEmail: fixture.homeTeam.managerEmail,
+              managerEmail: homeMgrEmail,
               managerName: fixture.homeTeam.managerName,
               teamName: fixture.homeTeam.name,
               opponentName: fixture.awayTeam?.name || 'Opponent',
@@ -46,10 +53,16 @@ function startScheduler() {
             reminderSent = true;
           }
 
-          // Check Away Team Lineup
-          if (!fixture.awayLineup?.isLocked && fixture.awayTeam?.managerEmail) {
+          // Check Away Team Lineup (with User email fallback)
+          let awayMgrEmail = fixture.awayTeam?.managerEmail;
+          if (!awayMgrEmail && fixture.awayTeam?._id) {
+            const u = await User.findOne({ team: fixture.awayTeam._id });
+            if (u) awayMgrEmail = u.email;
+          }
+
+          if (!fixture.awayLineup?.isLocked && awayMgrEmail) {
             await EmailService.sendLineupReminderEmail({
-              managerEmail: fixture.awayTeam.managerEmail,
+              managerEmail: awayMgrEmail,
               managerName: fixture.awayTeam.managerName,
               teamName: fixture.awayTeam.name,
               opponentName: fixture.homeTeam?.name || 'Opponent',
