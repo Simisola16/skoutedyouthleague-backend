@@ -4,7 +4,10 @@ const Team = require('../models/Team');
 const Player = require('../models/Player');
 const Fixture = require('../models/Fixture');
 const User = require('../models/User');
+const LeagueSettings = require('../models/LeagueSettings');
 const EmailService = require('../services/emailService');
+const LeagueService = require('../services/leagueService');
+const { broadcastLeagueSettingsUpdate } = require('../services/socketService');
 const { requireAdmin } = require('../middleware/authMiddleware');
 const { upload } = require('../services/cloudinary');
 
@@ -687,6 +690,103 @@ router.patch('/teams/:id/status', async (req, res) => {
     });
   } catch (err) {
     console.error('[Admin Update Team Status Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. GET /api/admin/settings - Retrieve Current Competition & Transfer Window Settings
+router.get('/settings', async (req, res) => {
+  try {
+    const settings = await LeagueSettings.getSettings();
+    res.json({ success: true, data: settings });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7. PATCH /api/admin/settings - Update Transfer Window, Registration Lock & League Parameters
+router.patch('/settings', async (req, res) => {
+  try {
+    const {
+      transferWindowStatus,
+      registrationLocked,
+      seasonPhase,
+      maxSquadSize,
+      transferWindowClosesAt,
+      initialRegistrationClosesAt,
+      seasonKickoffDate,
+      broadcastNotice
+    } = req.body;
+
+    const settings = await LeagueSettings.getSettings();
+    const previousStatus = settings.transferWindowStatus;
+
+    if (transferWindowStatus !== undefined) {
+      settings.transferWindowStatus = transferWindowStatus;
+      if (transferWindowStatus === 'open') {
+        settings.registrationLocked = false;
+        settings.transferWindowOpenedAt = new Date();
+      }
+    }
+
+    if (registrationLocked !== undefined) {
+      settings.registrationLocked = Boolean(registrationLocked);
+    }
+
+    if (seasonPhase !== undefined) {
+      settings.seasonPhase = seasonPhase;
+    }
+
+    if (maxSquadSize !== undefined && !isNaN(Number(maxSquadSize))) {
+      settings.maxSquadSize = Number(maxSquadSize);
+    }
+
+    if (transferWindowClosesAt !== undefined) {
+      settings.transferWindowClosesAt = transferWindowClosesAt ? new Date(transferWindowClosesAt) : null;
+    }
+
+    if (initialRegistrationClosesAt !== undefined) {
+      settings.initialRegistrationClosesAt = initialRegistrationClosesAt ? new Date(initialRegistrationClosesAt) : null;
+    }
+
+    if (seasonKickoffDate !== undefined) {
+      settings.seasonKickoffDate = seasonKickoffDate ? new Date(seasonKickoffDate) : null;
+    }
+
+    settings.lastUpdatedBy = req.user?.id || null;
+    await settings.save();
+
+    broadcastLeagueSettingsUpdate(settings);
+
+    // If transfer window opened and broadcast was requested (or status changed to open)
+    let emailNoticeResult = null;
+    if (settings.transferWindowStatus === 'open' && (broadcastNotice || previousStatus !== 'open')) {
+      emailNoticeResult = await LeagueService.broadcastTransferWindowAnnouncement(settings);
+    }
+
+    res.json({
+      success: true,
+      message: `League settings updated successfully.${emailNoticeResult ? ` Broadcast email sent to ${emailNoticeResult.count} clubs.` : ''}`,
+      data: settings,
+      emailNoticeResult
+    });
+  } catch (err) {
+    console.error('[Admin Update Settings Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8. POST /api/admin/settings/broadcast-transfer-window - Broadcast Transfer Window Notice
+router.post('/settings/broadcast-transfer-window', async (req, res) => {
+  try {
+    const settings = await LeagueSettings.getSettings();
+    const result = await LeagueService.broadcastTransferWindowAnnouncement(settings);
+    res.json({
+      success: true,
+      message: `Transfer window announcement email successfully dispatched to ${result.count || 0} club managers.`,
+      data: result
+    });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

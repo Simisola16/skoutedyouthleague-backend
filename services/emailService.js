@@ -602,6 +602,67 @@ class EmailService {
       return { success: false, error: error.message };
     }
   }
+
+  // 8. Mid-Season Transfer Window Open Notification
+  static async sendTransferWindowOpenEmail({ managerEmail, managerName, teamName, squadCount = 0, maxSquadSize = 35, closingDate = null }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const subject = 'Transfer Window Officially Open | Skouted Youth League Championship';
+      const formattedClose = closingDate ? new Date(closingDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'prior to Leg 2 kickoff';
+      const openSlots = Math.max(0, maxSquadSize - squadCount);
+
+      const content = `
+        <h2 style="color:#00E676; font-size:20px; margin-top:0; font-weight:900;">Mid-Season Transfer Window Active</h2>
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
+          All 12 clubs have successfully concluded their Leg 1 championship fixtures! The official <strong>Mid-Season Transfer Window</strong> is now officially <strong>OPEN</strong> for all accredited clubs.
+        </p>
+
+        <div class="highlight-box" style="border-left-color: #00E676; background-color: rgba(0, 230, 118, 0.08);">
+          <div style="font-size:12px; font-weight:800; color:#00E676; text-transform:uppercase; margin-bottom:6px;">
+            📋 Current Squad Registration Status: ${teamName}
+          </div>
+          <p style="margin:0; font-size:15px; color:#FFFFFF; font-weight:700;">
+            ${squadCount} / ${maxSquadSize} Players Registered (${openSlots} Available Slots)
+          </p>
+          <p style="margin:8px 0 0 0; font-size:12px; color:#94A3B8; line-height:1.5;">
+            • <strong>Squad Limit:</strong> Maximum squad capacity is strictly capped at <strong>${maxSquadSize} players</strong>.<br>
+            • <strong>New Signings:</strong> Clubs with open slots can register and verify new players directly.<br>
+            • <strong>Transfers Out:</strong> Clubs at capacity (${maxSquadSize}/${maxSquadSize}) can release existing squad members to create openings for incoming players.<br>
+            • <strong>Window Closes:</strong> ${formattedClose}.
+          </p>
+        </div>
+
+        <div style="text-align:center; margin:24px 0;">
+          <a href="https://skoutedyouthleague.vercel.app/team/dashboard" class="btn" style="color:#07120B !important;">
+            Open Squad Roster & Register Players &rarr;
+          </a>
+        </div>
+
+        <p style="color:#64748B; font-size:12px; text-align:center;">
+          Please ensure all new additions are submitted before the transfer window deadline. Once the window closes, player registrations will be strictly locked for the remainder of the tournament.
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: 'Mid-Season Transfer Window Open',
+        preheader: `The mid-season transfer window is officially open! ${teamName} currently has ${squadCount}/${maxSquadSize} players registered.`,
+        content,
+        badgeText: 'TRANSFER WINDOW OPEN'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Transfer Window Officially Open | Skouted Youth League Championship. Hello ${managerName || 'Team Manager'}, the transfer window is now active. Your team ${teamName} has ${squadCount}/${maxSquadSize} players registered (${openSlots} slots remaining). Register new players at https://skoutedyouthleague.vercel.app/team/dashboard before the window closes.`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Transfer Window]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = EmailService;

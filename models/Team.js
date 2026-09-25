@@ -101,6 +101,14 @@ teamSchema.virtual('squad', {
   foreignField: 'team'
 });
 
+// Virtual playerCount representing active registered players (must never exceed 35)
+teamSchema.virtual('playerCount', {
+  ref: 'Player',
+  localField: '_id',
+  foreignField: 'team',
+  count: true
+});
+
 // Indexes for fast league queries
 teamSchema.index({ shortCode: 1 }, { unique: true });
 teamSchema.index({ 'stats.points': -1, 'stats.goalDifference': -1, 'stats.goalsFor': -1 });

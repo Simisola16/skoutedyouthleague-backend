@@ -7,6 +7,7 @@ const Player = require('../models/Player');
 const FanSubscription = require('../models/FanSubscription');
 const User = require('../models/User');
 const EmailService = require('../services/emailService');
+const LeagueService = require('../services/leagueService');
 const { broadcastMatchUpdate, broadcastMatchEvent, broadcastStandingsUpdate } = require('../services/socketService');
 const { requireAdmin, requireOfficialOrAdmin } = require('../middleware/authMiddleware');
 
@@ -83,6 +84,9 @@ async function recalculateStandings() {
 
     const updatedStandings = await Team.find().sort({ 'stats.points': -1, 'stats.goalDifference': -1, 'stats.goalsFor': -1 });
     broadcastStandingsUpdate(updatedStandings);
+
+    // Evaluate automated Mid-Season Transfer Window trigger upon Leg 1 completion
+    await LeagueService.checkLeg1CompletionAndTriggerTransferWindow();
   } catch (err) {
     console.error('[Recalculate Standings Error]:', err);
   }

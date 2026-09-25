@@ -4,6 +4,7 @@ const Team = require('../models/Team');
 const Player = require('../models/Player');
 const Fixture = require('../models/Fixture');
 const User = require('../models/User');
+const LeagueSettings = require('../models/LeagueSettings');
 const { upload } = require('../services/cloudinary');
 const { broadcastMatchUpdate } = require('../services/socketService');
 
@@ -88,7 +89,10 @@ router.post('/', upload.single('crest'), async (req, res) => {
 // 4. Add Player to Team Squad (with optional Cloudinary photo)
 router.post('/:id/players', upload.single('photo'), async (req, res) => {
   try {
-    const team = await Team.findById(req.params.id);
+    const [team, settings] = await Promise.all([
+      Team.findById(req.params.id),
+      LeagueSettings.getSettings()
+    ]);
     if (!team) {
       return res.status(404).json({ success: false, error: 'Team not found' });
     }
@@ -98,6 +102,30 @@ router.post('/:id/players', upload.single('photo'), async (req, res) => {
       return res.status(403).json({
         success: false,
         error: 'Your team has not yet been verified by the administrator. Player registration is locked.'
+      });
+    }
+
+    const maxLimit = settings.maxSquadSize || 35;
+    const currentCount = await Player.countDocuments({ team: team._id });
+    if (currentCount >= maxLimit) {
+      return res.status(400).json({
+        success: false,
+        error: `Squad capacity reached. Maximum allowed is ${maxLimit} players.`
+      });
+    }
+
+    if (settings.registrationLocked === true && settings.transferWindowStatus === 'closed') {
+      return res.status(403).json({
+        success: false,
+        error: "Player registration is currently closed. New players cannot be added until the mid-season transfer window opens."
+      });
+    }
+
+    const eligibility = settings.checkRegistrationEligibility();
+    if (!eligibility.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: eligibility.reason
       });
     }
 

@@ -5,6 +5,7 @@ const Team = require('../models/Team');
 const Player = require('../models/Player');
 const Fixture = require('../models/Fixture');
 const User = require('../models/User');
+const LeagueSettings = require('../models/LeagueSettings');
 const { requireTeamManager } = require('../middleware/authMiddleware');
 const { upload } = require('../services/cloudinary');
 const { broadcastMatchUpdate } = require('../services/socketService');
@@ -13,8 +14,8 @@ const EmailService = require('../services/emailService');
 // All endpoints in this router require authenticated team manager clearance
 router.use(requireTeamManager);
 
-// MAX REGISTERED SQUAD LIMIT
-const MAX_SQUAD_LIMIT = 25;
+// MAX REGISTERED SQUAD LIMIT (Capped strictly at 35 players)
+const MAX_SQUAD_LIMIT = 35;
 
 // Helper: Calculate fixture kickoff Date
 function getKickoffDateTime(fixture) {
@@ -36,16 +37,17 @@ function getKickoffDateTime(fixture) {
 // -------------------------------------------------------------
 router.get('/dashboard', async (req, res) => {
   try {
-    const team = await Team.findById(req.teamId);
-    const players = await Player.find({ team: req.teamId }).sort({ jerseyNumber: 1 });
-
-    // Find all fixtures for this team
-    const allFixtures = await Fixture.find({
-      $or: [{ homeTeam: req.teamId }, { awayTeam: req.teamId }]
-    })
-      .populate('homeTeam', 'name shortCode logo homeKitColor awayKitColor')
-      .populate('awayTeam', 'name shortCode logo homeKitColor awayKitColor')
-      .sort({ date: 1, time: 1 });
+    const [team, players, allFixtures, settings] = await Promise.all([
+      Team.findById(req.teamId),
+      Player.find({ team: req.teamId }).sort({ jerseyNumber: 1 }),
+      Fixture.find({
+        $or: [{ homeTeam: req.teamId }, { awayTeam: req.teamId }]
+      })
+        .populate('homeTeam', 'name shortCode logo homeKitColor awayKitColor')
+        .populate('awayTeam', 'name shortCode logo homeKitColor awayKitColor')
+        .sort({ date: 1, time: 1 }),
+      LeagueSettings.getSettings()
+    ]);
 
     const now = new Date();
 
@@ -107,6 +109,8 @@ router.get('/dashboard', async (req, res) => {
       }
     }
 
+    const maxLimit = settings.maxSquadSize || 35;
+
     res.json({
       success: true,
       data: {
@@ -119,7 +123,16 @@ router.get('/dashboard', async (req, res) => {
           role: req.teamUser.role
         },
         squadCount: players.length,
-        maxSquadLimit: MAX_SQUAD_LIMIT,
+        maxSquadLimit: maxLimit,
+        leagueSettings: {
+          competitionName: settings.competitionName,
+          maxSquadSize: maxLimit,
+          transferWindowStatus: settings.transferWindowStatus || 'closed',
+          registrationLocked: settings.registrationLocked || false,
+          seasonPhase: settings.seasonPhase || 'pre_season',
+          initialRegistrationClosesAt: settings.initialRegistrationClosesAt,
+          transferWindowClosesAt: settings.transferWindowClosesAt
+        },
         nextMatch,
         nextMatchAlert,
         summary: {
@@ -148,13 +161,21 @@ router.get('/dashboard', async (req, res) => {
 // GET full squad
 router.get('/roster', async (req, res) => {
   try {
-    const players = await Player.find({ team: req.teamId }).sort({ jerseyNumber: 1 });
+    const [players, settings] = await Promise.all([
+      Player.find({ team: req.teamId }).sort({ jerseyNumber: 1 }),
+      LeagueSettings.getSettings()
+    ]);
+    const maxLimit = settings.maxSquadSize || 35;
+
     res.json({
       success: true,
       data: {
         players,
         count: players.length,
-        maxLimit: MAX_SQUAD_LIMIT
+        maxLimit,
+        transferWindowStatus: settings.transferWindowStatus || 'closed',
+        registrationLocked: settings.registrationLocked || false,
+        seasonPhase: settings.seasonPhase || 'pre_season'
       }
     });
   } catch (err) {
@@ -165,7 +186,11 @@ router.get('/roster', async (req, res) => {
 // POST add player to squad (/api/team/roster and /api/team/players)
 const handleAddPlayer = async (req, res) => {
   try {
-    const team = await Team.findById(req.teamId);
+    const [team, settings] = await Promise.all([
+      Team.findById(req.teamId),
+      LeagueSettings.getSettings()
+    ]);
+
     if (!team) {
       return res.status(404).json({ success: false, error: 'Team not found' });
     }
@@ -178,11 +203,31 @@ const handleAddPlayer = async (req, res) => {
       });
     }
 
+    const maxLimit = settings.maxSquadSize || 35;
     const currentCount = await Player.countDocuments({ team: req.teamId });
-    if (currentCount >= MAX_SQUAD_LIMIT) {
+
+    // Check 1: Ensure total current players for this team < 35. If equal to 35, return 400 Bad Request
+    if (currentCount >= maxLimit) {
       return res.status(400).json({
         success: false,
-        error: `Squad roster limit reached (${MAX_SQUAD_LIMIT} players maximum). Remove an existing player or contact tournament organizers.`
+        error: `Squad capacity reached. Maximum allowed is ${maxLimit} players.`
+      });
+    }
+
+    // Check 2: Check current transfer window / registration lock status
+    if (settings.registrationLocked === true && settings.transferWindowStatus === 'closed') {
+      return res.status(403).json({
+        success: false,
+        error: "Player registration is currently closed. New players cannot be added until the mid-season transfer window opens."
+      });
+    }
+
+    // Check 3: Check general registration cutoff / eligibility
+    const eligibility = settings.checkRegistrationEligibility();
+    if (!eligibility.allowed) {
+      return res.status(403).json({
+        success: false,
+        error: eligibility.reason
       });
     }
 

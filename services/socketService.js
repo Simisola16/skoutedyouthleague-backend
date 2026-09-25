@@ -48,10 +48,16 @@ function broadcastStandingsUpdate(standings) {
   io.emit('standings_updated', standings);
 }
 
+function broadcastLeagueSettingsUpdate(settings) {
+  if (!io) return;
+  io.emit('league_settings_updated', settings);
+}
+
 module.exports = {
   initSocket,
   broadcastMatchUpdate,
   broadcastMatchEvent,
   broadcastStandingsUpdate,
+  broadcastLeagueSettingsUpdate,
   getIo: () => io
 };

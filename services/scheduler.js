@@ -1,7 +1,9 @@
 const cron = require('node-cron');
 const Fixture = require('../models/Fixture');
 const User = require('../models/User');
+const LeagueSettings = require('../models/LeagueSettings');
 const EmailService = require('./emailService');
+const { broadcastLeagueSettingsUpdate } = require('./socketService');
 
 function startScheduler() {
   console.log('[Scheduler]: Starting 3-Hour Lineup Warning Cron Job (running every 5 minutes)...');
@@ -77,6 +79,35 @@ function startScheduler() {
             await fixture.save();
             console.log(`[Scheduler]: Marked lineupWarningSent=true for fixture ${fixture._id}`);
           }
+        }
+      }
+
+      // Check Transfer Window and Initial Registration Cutoffs
+      const settings = await LeagueSettings.findOne();
+      if (settings) {
+        let changed = false;
+
+        // Auto-close transfer window if deadline passed
+        if (settings.transferWindowStatus === 'open' && settings.transferWindowClosesAt && now > new Date(settings.transferWindowClosesAt)) {
+          console.log('[Scheduler]: ⏳ Transfer window deadline reached. Automatically closing transfer window...');
+          settings.transferWindowStatus = 'closed';
+          settings.registrationLocked = true;
+          if (settings.seasonPhase === 'mid_season_break') {
+            settings.seasonPhase = 'leg_2';
+          }
+          changed = true;
+        }
+
+        // Auto-lock initial registration if 2 weeks post kickoff cutoff passed
+        if (!settings.registrationLocked && settings.initialRegistrationClosesAt && now > new Date(settings.initialRegistrationClosesAt) && settings.transferWindowStatus === 'closed') {
+          console.log('[Scheduler]: ⏳ Initial registration window cutoff reached (2 weeks post-kickoff). Locking player additions...');
+          settings.registrationLocked = true;
+          changed = true;
+        }
+
+        if (changed) {
+          await settings.save();
+          broadcastLeagueSettingsUpdate(settings);
         }
       }
     } catch (err) {
