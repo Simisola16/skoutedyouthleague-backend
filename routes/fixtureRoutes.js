@@ -130,7 +130,7 @@ router.get('/:id', async (req, res) => {
 // 3. Create Fixture (Admin) + Send Fixture Announcement Email
 router.post('/', requireAdmin, async (req, res) => {
   try {
-    const { homeTeam, awayTeam, stage, date, time, venue } = req.body;
+    const { homeTeam, awayTeam, stage, leg, matchday, date, time, venue } = req.body;
 
     if (!homeTeam || !awayTeam || !date || !time) {
       return res.status(400).json({ success: false, error: 'Home team, away team, date, and time are required' });
@@ -140,13 +140,18 @@ router.post('/', requireAdmin, async (req, res) => {
       return res.status(400).json({ success: false, error: 'A team cannot play against itself' });
     }
 
+    const calculatedMatchday = Number(matchday) || (stage && stage.match(/Matchday\s*(\d+)/i) ? Number(stage.match(/Matchday\s*(\d+)/i)[1]) : 1);
+    const calculatedLeg = Number(leg) || (calculatedMatchday > 11 ? 2 : 1);
+
     const fixture = new Fixture({
       homeTeam,
       awayTeam,
-      stage: stage || 'Matchday 1',
+      stage: stage || `Matchday ${calculatedMatchday}`,
+      leg: calculatedLeg,
+      matchday: calculatedMatchday,
       date,
       time,
-      venue: venue || 'Pitch 1, Legacy Arena',
+      venue: venue || 'Lekan Salami Stadium, Adamasingba, Ibadan',
       status: 'UPCOMING'
     });
 
@@ -385,8 +390,8 @@ router.post('/recalculate', requireAdmin, async (req, res) => {
   }
 });
 
-// Helper for round-robin scheduling (Berger rotation method)
-function buildRoundRobinSchedule(teamsList) {
+// Helper for round-robin scheduling (Berger rotation method with 2-leg Home & Away support)
+function buildRoundRobinSchedule(teamsList, legs = 2) {
   const teams = [...teamsList];
   if (teams.length < 2) return [];
 
@@ -398,7 +403,7 @@ function buildRoundRobinSchedule(teamsList) {
   const n = teams.length;
   const numRounds = n - 1;
   const matchesPerRound = n / 2;
-  const rounds = [];
+  const leg1Rounds = [];
 
   for (let r = 0; r < numRounds; r++) {
     const roundMatches = [];
@@ -409,36 +414,55 @@ function buildRoundRobinSchedule(teamsList) {
       if (teamA !== null && teamB !== null) {
         // Alternate home/away based on round to balance home advantage
         if (r % 2 === 1) {
-          roundMatches.push({ homeTeam: teamB, awayTeam: teamA });
+          roundMatches.push({ homeTeam: teamB, awayTeam: teamA, leg: 1 });
         } else {
-          roundMatches.push({ homeTeam: teamA, awayTeam: teamB });
+          roundMatches.push({ homeTeam: teamA, awayTeam: teamB, leg: 1 });
         }
       }
     }
-    rounds.push(roundMatches);
+    leg1Rounds.push(roundMatches);
 
     // Rotate array: keep teams[0] fixed, rotate the rest
     const last = teams.pop();
     teams.splice(1, 0, last);
   }
 
-  return rounds;
+  if (Number(legs) === 1) {
+    return leg1Rounds;
+  }
+
+  // Leg 2: Exact reverse of home and away, scheduled after all Leg 1 matchdays
+  // This guarantees teams NEVER play back-to-back matches against each other!
+  const leg2Rounds = leg1Rounds.map(roundMatches => {
+    return roundMatches.map(m => ({
+      homeTeam: m.awayTeam,
+      awayTeam: m.homeTeam,
+      leg: 2
+    }));
+  });
+
+  return [...leg1Rounds, ...leg2Rounds];
 }
 
 // 10. POST /api/fixtures/auto-generate - Automated Tournament Scheduling Engine
 router.post('/auto-generate', requireAdmin, async (req, res) => {
   try {
     const {
-      mode = 'BY_GROUPS', // 'BY_GROUPS' | 'ALL_IN_ONE' | 'KNOCKOUT'
+      mode = 'LEAGUE_22', // 'LEAGUE_22' | 'ALL_IN_ONE' | 'BY_GROUPS' | 'KNOCKOUT'
+      legs = 2, // 2 (Home & Away, default) or 1 (Single Leg)
       startDate,
       daysBetweenRounds = 7,
-      timeSlots = ['10:00', '13:00', '16:00', '18:30'],
-      venues = ['Legacy Arena Pitch 1', 'Legacy Arena Pitch 2', 'National Stadium Arena'],
+      timeSlots = ['10:00', '13:00', '15:30', '18:00'],
+      venues = ['Lekan Salami Stadium, Adamasingba, Ibadan'],
       clearExistingUpcoming = false,
       autoNotifyManagers = false
     } = req.body;
 
+    const parsedLegs = (legs === '1_LEG' || Number(legs) === 1) ? 1 : 2;
     const baseDate = startDate ? new Date(startDate) : new Date();
+    const effectiveVenues = (venues && venues.length > 0)
+      ? venues
+      : ['Lekan Salami Stadium, Adamasingba, Ibadan'];
 
     // 1. Fetch eligible teams
     const allTeams = await Team.find().sort({ name: 1 });
@@ -458,8 +482,35 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
 
     const scheduledFixtures = [];
 
-    if (mode === 'BY_GROUPS') {
-      // Group teams by their designated group
+    if (mode === 'LEAGUE_22' || mode === 'ALL_IN_ONE') {
+      // 12-Team (or all-teams) League Format: 2 Legs (Home & Away) = 22 Matchdays for 12 clubs
+      const rounds = buildRoundRobinSchedule(allTeams, parsedLegs);
+
+      rounds.forEach((matches, roundIdx) => {
+        const matchdayNum = roundIdx + 1;
+        const roundDate = new Date(baseDate);
+        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
+        const dateStr = roundDate.toISOString().split('T')[0];
+
+        matches.forEach((m, matchIdx) => {
+          const time = timeSlots[matchIdx % timeSlots.length];
+          const venue = effectiveVenues[matchIdx % effectiveVenues.length];
+
+          scheduledFixtures.push({
+            homeTeam: m.homeTeam._id,
+            awayTeam: m.awayTeam._id,
+            stage: `Matchday ${matchdayNum}`,
+            matchday: matchdayNum,
+            leg: m.leg || (matchdayNum <= rounds.length / 2 ? 1 : 2),
+            date: dateStr,
+            time: time,
+            venue: venue,
+            status: 'UPCOMING'
+          });
+        });
+      });
+    } else if (mode === 'BY_GROUPS') {
+      // Group teams by their designated group with 2-leg option
       const groupsMap = {};
       allTeams.forEach(t => {
         const grp = t.group || 'Group A';
@@ -473,13 +524,14 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
       let maxRounds = 0;
       const groupRoundsMap = {};
       groupNames.forEach(grp => {
-        const rounds = buildRoundRobinSchedule(groupsMap[grp]);
+        const rounds = buildRoundRobinSchedule(groupsMap[grp], parsedLegs);
         groupRoundsMap[grp] = rounds;
         if (rounds.length > maxRounds) maxRounds = rounds.length;
       });
 
       // Distribute rounds across matchday dates
       for (let roundIdx = 0; roundIdx < maxRounds; roundIdx++) {
+        const matchdayNum = roundIdx + 1;
         const roundDate = new Date(baseDate);
         roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
         const dateStr = roundDate.toISOString().split('T')[0];
@@ -492,13 +544,15 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
             const matches = groupRounds[roundIdx];
             matches.forEach(m => {
               const time = timeSlots[matchSlotIdx % timeSlots.length];
-              const venue = venues[matchSlotIdx % venues.length];
+              const venue = effectiveVenues[matchSlotIdx % effectiveVenues.length];
               matchSlotIdx++;
 
               scheduledFixtures.push({
                 homeTeam: m.homeTeam._id,
                 awayTeam: m.awayTeam._id,
-                stage: `${grp} - Matchday ${roundIdx + 1}`,
+                stage: `${grp} - Matchday ${matchdayNum}`,
+                matchday: matchdayNum,
+                leg: m.leg || (matchdayNum <= groupRounds.length / 2 ? 1 : 2),
                 date: dateStr,
                 time: time,
                 venue: venue,
@@ -508,29 +562,6 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
           }
         });
       }
-    } else if (mode === 'ALL_IN_ONE') {
-      // All-play-all full championship schedule
-      const rounds = buildRoundRobinSchedule(allTeams);
-      rounds.forEach((matches, roundIdx) => {
-        const roundDate = new Date(baseDate);
-        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
-        const dateStr = roundDate.toISOString().split('T')[0];
-
-        matches.forEach((m, matchIdx) => {
-          const time = timeSlots[matchIdx % timeSlots.length];
-          const venue = venues[matchIdx % venues.length];
-
-          scheduledFixtures.push({
-            homeTeam: m.homeTeam._id,
-            awayTeam: m.awayTeam._id,
-            stage: `Matchday ${roundIdx + 1}`,
-            date: dateStr,
-            time: time,
-            venue: venue,
-            status: 'UPCOMING'
-          });
-        });
-      });
     } else if (mode === 'KNOCKOUT') {
       // Single elimination tournament bracket round 1
       const shuffled = [...allTeams].sort(() => Math.random() - 0.5);
@@ -539,11 +570,13 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
 
       for (let i = 0; i < half; i++) {
         const time = timeSlots[i % timeSlots.length];
-        const venue = venues[i % venues.length];
+        const venue = effectiveVenues[i % effectiveVenues.length];
         scheduledFixtures.push({
           homeTeam: shuffled[i * 2]._id,
           awayTeam: shuffled[i * 2 + 1]._id,
           stage: half >= 4 ? 'Quarter-Final' : half === 2 ? 'Semi-Final' : 'Grand Final',
+          matchday: 1,
+          leg: 1,
           date: dateStr,
           time: time,
           venue: venue,

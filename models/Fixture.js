@@ -44,6 +44,15 @@ const fixtureSchema = new mongoose.Schema({
     type: String,
     default: 'Matchday 1'
   },
+  leg: {
+    type: Number,
+    enum: [1, 2],
+    default: 1
+  },
+  matchday: {
+    type: Number,
+    default: 1
+  },
   date: {
     type: String,
     required: true
@@ -54,7 +63,7 @@ const fixtureSchema = new mongoose.Schema({
   },
   venue: {
     type: String,
-    default: 'Pitch 1, Legacy Football Arena'
+    default: 'Lekan Salami Stadium, Adamasingba, Ibadan'
   },
   status: {
     type: String,
