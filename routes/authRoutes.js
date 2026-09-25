@@ -54,16 +54,13 @@ router.post('/register', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: emailRes.success
-        ? 'Account created. Verification OTP sent to your email.'
-        : `Account created. Verification code generated: ${otp}`,
+      message: 'Account created. A 6-digit verification code has been dispatched to your email.',
       data: {
         userId: user._id,
         email: user.email,
         name: user.name,
         role: user.role,
         isVerified: false,
-        debugOtp: otp,
         emailSent: emailRes.success
       }
     });
@@ -165,10 +162,7 @@ router.post('/resend-otp', async (req, res) => {
 
     res.json({
       success: true,
-      message: emailRes.success
-        ? 'New 6-digit verification code sent to your email.'
-        : `New 6-digit verification code generated: ${otp}`,
-      debugOtp: otp,
+      message: 'A fresh 6-digit verification code has been dispatched to your email.',
       emailSent: emailRes.success
     });
   } catch (err) {
@@ -213,11 +207,8 @@ router.post('/login', async (req, res) => {
         success: false,
         requiresVerification: true,
         email: user.email,
-        debugOtp: otp,
         emailSent: emailRes.success,
-        error: emailRes.success
-          ? 'Account not verified. A new 6-digit OTP has been sent to your email.'
-          : `Account not verified. Your 6-digit verification code is ${otp}.`
+        error: 'Account not verified. A 6-digit verification code has been dispatched to your email.'
       });
     }
 

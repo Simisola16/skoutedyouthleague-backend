@@ -28,8 +28,121 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   });
 }
 
-// Unified multi-tier email dispatcher
-async function dispatchMail({ to, subject, html, text }) {
+/**
+ * Utility to identify HTTP 429 Rate Limit responses from Resend or SMTP
+ */
+function isRateLimitError(error) {
+  if (!error) return false;
+  if (typeof error === 'object') {
+    if (error.statusCode === 429 || error.status === 429 || error.name === 'rate_limit_exceeded') {
+      return true;
+    }
+    const msg = String(error.message || error.name || error.code || JSON.stringify(error)).toLowerCase();
+    if (/429|rate\s*limit|too\s*many\s*requests|quota\s*exceeded/i.test(msg)) {
+      return true;
+    }
+  }
+  if (typeof error === 'string') {
+    if (/429|rate\s*limit|too\s*many\s*requests|quota\s*exceeded/i.test(error)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Intelligent Rate Limiting & Auto-Retry Queue for Transactional Emails
+ * Controls throughput (max 3-4 req/sec to stay safely under Resend's 10 req/s limit)
+ * and applies Exponential Backoff with Jitter whenever a 429 rate limit is encountered.
+ */
+class EmailRateLimiterQueue {
+  constructor(options = {}) {
+    // 250ms spacing ensures a steady rate of ~4 req/s max, completely eliminating burst 429s
+    this.minIntervalMs = options.minIntervalMs || parseInt(process.env.EMAIL_MIN_INTERVAL_MS || '250', 10);
+    this.maxRetries = options.maxRetries || 5;
+    this.queue = [];
+    this.isProcessing = false;
+    this.lastDispatchedAt = 0;
+    this.rateLimitPausedUntil = 0;
+  }
+
+  async enqueue(taskFn) {
+    return new Promise((resolve, reject) => {
+      this.queue.push({ taskFn, resolve, reject, retries: 0, enqueuedAt: Date.now() });
+      this.processNext();
+    });
+  }
+
+  async processNext() {
+    if (this.isProcessing || this.queue.length === 0) {
+      return;
+    }
+
+    this.isProcessing = true;
+
+    while (this.queue.length > 0) {
+      const item = this.queue[0]; // peek item
+
+      // 1. If currently paused due to an upstream 429 rate limit backoff, wait until clear
+      const now = Date.now();
+      if (this.rateLimitPausedUntil > now) {
+        const pauseTime = this.rateLimitPausedUntil - now;
+        console.log(`[EmailQueue]: Queue paused for ${pauseTime}ms due to active rate-limit backoff window...`);
+        await new Promise(r => setTimeout(r, pauseTime));
+      }
+
+      // 2. Enforce minimum interval between consecutive API dispatches
+      const elapsedSinceLast = Date.now() - this.lastDispatchedAt;
+      if (elapsedSinceLast < this.minIntervalMs) {
+        await new Promise(r => setTimeout(r, this.minIntervalMs - elapsedSinceLast));
+      }
+
+      // Remove item to execute
+      this.queue.shift();
+      this.lastDispatchedAt = Date.now();
+
+      try {
+        const result = await item.taskFn();
+
+        // Check if provider returned a 429 in response body
+        if (result && (!result.success && isRateLimitError(result.error))) {
+          if (item.retries < this.maxRetries) {
+            item.retries++;
+            // Exponential backoff with random jitter (e.g. 1.2s, 2.5s, 5s, 10s)
+            const jitter = Math.floor(Math.random() * 400);
+            const backoffMs = Math.min(12000, (1000 * Math.pow(2, item.retries - 1)) + jitter);
+            console.warn(`[EmailQueue ⚠️ Rate Limit 429]: Resend 10 req/s rate limit reached. Pausing queue & backing off for ${backoffMs}ms before retry ${item.retries}/${this.maxRetries}...`);
+            this.rateLimitPausedUntil = Date.now() + backoffMs;
+            this.queue.unshift(item); // Re-insert at the head of queue
+            continue;
+          }
+        }
+
+        item.resolve(result);
+      } catch (err) {
+        if (isRateLimitError(err) && item.retries < this.maxRetries) {
+          item.retries++;
+          const jitter = Math.floor(Math.random() * 400);
+          const backoffMs = Math.min(12000, (1000 * Math.pow(2, item.retries - 1)) + jitter);
+          console.warn(`[EmailQueue ⚠️ Rate Limit 429 Exception]: ${err.message}. Backing off for ${backoffMs}ms before retry ${item.retries}/${this.maxRetries}...`);
+          this.rateLimitPausedUntil = Date.now() + backoffMs;
+          this.queue.unshift(item); // Re-insert at the head of queue
+          continue;
+        }
+
+        item.reject(err);
+      }
+    }
+
+    this.isProcessing = false;
+  }
+}
+
+// Global queue singleton
+const emailQueue = new EmailRateLimiterQueue({ minIntervalMs: 250, maxRetries: 5 });
+
+// Internal raw sender that interacts with Resend and SMTP
+async function rawSendMail({ to, subject, html, text }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
   if (recipients.length === 0) {
     return { success: false, error: 'No recipients provided' };
@@ -52,8 +165,16 @@ async function dispatchMail({ to, subject, html, text }) {
       }
 
       console.warn(`[EmailService Warning - Resend Provider Error]: ${res.error?.message || JSON.stringify(res.error)}`);
+
+      // If rate limited, signal the queue to back off and retry
+      if (isRateLimitError(res.error)) {
+        return { success: false, error: res.error, isRateLimit: true };
+      }
     } catch (resendErr) {
       console.warn(`[EmailService Warning - Resend Exception]: ${resendErr.message}`);
+      if (isRateLimitError(resendErr)) {
+        return { success: false, error: resendErr, isRateLimit: true };
+      }
     }
   }
 
@@ -82,6 +203,11 @@ async function dispatchMail({ to, subject, html, text }) {
     error: 'Email provider quota reached (Resend 429). In-app verification active.',
     quotaExceeded: true
   };
+}
+
+// Unified multi-tier email dispatcher (routed through the rate-limited queue)
+async function dispatchMail(mailOptions) {
+  return emailQueue.enqueue(() => rawSendMail(mailOptions));
 }
 
 // Athletic Dark Theme Base Template Helper
@@ -188,7 +314,7 @@ class EmailService {
       const recipients = [homeManagerEmail, awayManagerEmail].filter(Boolean);
       if (recipients.length === 0) return { success: false, error: 'No recipients provided' };
 
-      const subject = `🏆 Fixture Confirmed: ${homeTeamName} vs ${awayTeamName} (${stage})`;
+      const subject = `🏆 Fixture Confirmed: ${homeTeamName} vs ${awayTeamName} (${stage || 'Matchday'})`;
       const content = `
         <h2 style="color:#FFFFFF; font-size:18px; margin-top:0;">Official Match Fixture Scheduled</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
@@ -201,7 +327,7 @@ class EmailService {
           <table style="width:100%; font-size:13px; color:#CBD5E1; border-collapse:collapse;">
             <tr>
               <td style="padding:4px 0; color:#64748B;">Stage:</td>
-              <td style="padding:4px 0; font-weight:700; text-align:right;">${stage}</td>
+              <td style="padding:4px 0; font-weight:700; text-align:right;">${stage || 'Matchday'}</td>
             </tr>
             <tr>
               <td style="padding:4px 0; color:#64748B;">Date:</td>
@@ -213,7 +339,7 @@ class EmailService {
             </tr>
             <tr>
               <td style="padding:4px 0; color:#64748B;">Venue:</td>
-              <td style="padding:4px 0; font-weight:700; text-align:right;">${venue}</td>
+              <td style="padding:4px 0; font-weight:700; text-align:right;">${venue || 'Tournament Arena'}</td>
             </tr>
           </table>
         </div>
@@ -233,7 +359,7 @@ class EmailService {
         to: recipients,
         subject,
         html,
-        text: `Fixture Confirmed: ${homeTeamName} vs ${awayTeamName} on ${date} at ${time} (${venue})`
+        text: `Fixture Confirmed: ${homeTeamName} vs ${awayTeamName} on ${date} at ${time} (${venue || 'Tournament Arena'})`
       });
     } catch (error) {
       console.error('[EmailService Error - Fixture Announcement]:', error.message);
@@ -242,16 +368,17 @@ class EmailService {
   }
 
   // 3. Lineup Reminder (Urgent & Automated Cron)
-  static async sendLineupReminderEmail({ managerEmail, managerName, teamName, opponentName, kickoffTime, fixtureId }) {
+  static async sendLineupReminderEmail({ managerEmail, managerName, teamName, opponentName, kickoffTime, fixtureId, date, time, venue }) {
     try {
       if (!managerEmail) return { success: false, error: 'No manager email' };
 
-      const subject = `⚡ URGENT: Match Kickoff Soon - Submit Starting XI for ${teamName} vs ${opponentName}`;
+      const timeDisplay = kickoffTime || (time && date ? `${time} on ${date}` : 'Upcoming Match');
+      const subject = `⚡ URGENT: Match Kickoff Soon - Submit Starting XI for ${teamName} vs ${opponentName || 'Opponent'}`;
       const content = `
         <h2 style="color:#FF4B4B; font-size:18px; margin-top:0;">⚠️ Mandatory Starting XI Required</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
           Hello <strong style="color:#FFFFFF;">${managerName || 'Coach'}</strong>,<br>
-          Your match against <strong style="color:#FFFFFF;">${opponentName}</strong> kicks off soon (scheduled for <span style="color:#00E676;">${kickoffTime}</span>).
+          Your match against <strong style="color:#FFFFFF;">${opponentName || 'your opponent'}</strong> kicks off soon (scheduled for <span style="color:#00E676;">${timeDisplay}</span>).
         </p>
         <div class="highlight-box" style="border-left-color: #FFB800;">
           <p style="margin:0; font-size:13px; color:#F1F5F9;">
@@ -274,7 +401,7 @@ class EmailService {
         to: managerEmail,
         subject,
         html,
-        text: `URGENT: Submit Starting XI for ${teamName} vs ${opponentName}`
+        text: `URGENT: Submit Starting XI for ${teamName} vs ${opponentName || 'Opponent'} (${timeDisplay})`
       });
     } catch (error) {
       console.error('[EmailService Error - Lineup Reminder]:', error.message);
@@ -317,12 +444,19 @@ class EmailService {
         badgeText: 'LIVE GOAL ALERT'
       });
 
-      return await dispatchMail({
-        to: fanEmails.slice(0, 50),
-        subject,
-        html,
-        text: `GOAL! ${playerName} scores in ${minute}'! ${scoringTeamName} [${homeScore}-${awayScore}] ${opponentTeamName}`
-      });
+      // Split into chunks of 50 to respect provider limits
+      const validEmails = Array.isArray(fanEmails) ? fanEmails.filter(Boolean) : [fanEmails].filter(Boolean);
+      for (let i = 0; i < validEmails.length; i += 50) {
+        const batch = validEmails.slice(i, i + 50);
+        await dispatchMail({
+          to: batch,
+          subject,
+          html,
+          text: `GOAL! ${playerName} scores in ${minute}'! ${scoringTeamName} [${homeScore}-${awayScore}] ${opponentTeamName}`
+        });
+      }
+
+      return { success: true };
     } catch (error) {
       console.error('[EmailService Error - Fan Goal Alert]:', error.message);
       return { success: false, error: error.message };
