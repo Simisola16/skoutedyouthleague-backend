@@ -25,6 +25,7 @@ const newsRoutes = require('./routes/newsRoutes');
 const podcastRoutes = require('./routes/podcastRoutes');
 const sponsorRoutes = require('./routes/sponsorRoutes');
 const galleryRoutes = require('./routes/galleryRoutes');
+const mediaRoutes = require('./routes/mediaRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -74,6 +75,9 @@ app.use('/api/news', newsRoutes);
 app.use('/api/podcasts', podcastRoutes);
 app.use('/api/sponsors', sponsorRoutes);
 app.use('/api/gallery', galleryRoutes);
+app.use('/api/media', mediaRoutes);
+app.use('/api/uploads', mediaRoutes);
+app.use('/uploads', mediaRoutes);
 
 // Public Settings & Site Content Endpoints
 app.get('/api/settings', async (req, res) => {

@@ -10,7 +10,7 @@ const EmailService = require('../services/emailService');
 const LeagueService = require('../services/leagueService');
 const { broadcastLeagueSettingsUpdate } = require('../services/socketService');
 const { requireAdmin } = require('../middleware/authMiddleware');
-const { upload, galleryUpload, cloudinary } = require('../services/cloudinary');
+const { upload, galleryUpload, cloudinary, deleteFromGridFS } = require('../services/cloudinary');
 
 // All routes in this router require role: "admin"
 router.use(requireAdmin);
@@ -1006,7 +1006,9 @@ router.post('/media', (req, res) => {
               caption: caption || '',
               category: category || 'Matchday Action',
               url: file.path || file.secure_url,
-              publicId: file.filename || '',
+              publicId: file.filename || file.publicId || '',
+              fileId: file.fileId || (file.id ? file.id : null),
+              storageType: file.storage || 'gridfs',
               matchTag: matchTag || '',
               tags: parsedTags,
               isPublished: booleanPublished,
@@ -1123,8 +1125,10 @@ router.delete('/media/:id', async (req, res) => {
       return res.status(404).json({ success: false, error: 'Media asset not found' });
     }
 
-    // Attempt Cloudinary cleanup if publicId exists
-    if (item.publicId) {
+    // Attempt GridFS or Cloudinary cleanup
+    if (item.fileId || (item.publicId && item.publicId.match(/^[0-9a-fA-F]{24}$/))) {
+      await deleteFromGridFS(item.fileId || item.publicId);
+    } else if (item.publicId) {
       try {
         await cloudinary.uploader.destroy(item.publicId);
       } catch (cErr) {
@@ -1153,7 +1157,9 @@ router.post('/media/bulk-delete', async (req, res) => {
 
     const items = await MediaItem.find({ _id: { $in: ids } });
     for (const item of items) {
-      if (item.publicId) {
+      if (item.fileId || (item.publicId && item.publicId.match(/^[0-9a-fA-F]{24}$/))) {
+        await deleteFromGridFS(item.fileId || item.publicId);
+      } else if (item.publicId) {
         try {
           await cloudinary.uploader.destroy(item.publicId);
         } catch (e) {

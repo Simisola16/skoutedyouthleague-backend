@@ -31,6 +31,16 @@ const mediaItemSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  fileId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null,
+    ref: 'media_images.files'
+  },
+  storageType: {
+    type: String,
+    enum: ['gridfs', 'cloudinary', 'external'],
+    default: 'gridfs'
+  },
   width: {
     type: Number,
     default: 0
