@@ -716,7 +716,9 @@ router.patch('/settings', async (req, res) => {
       transferWindowClosesAt,
       initialRegistrationClosesAt,
       seasonKickoffDate,
-      broadcastNotice
+      broadcastNotice,
+      aboutImageUrl,
+      aboutImageCaption
     } = req.body;
 
     const settings = await LeagueSettings.getSettings();
@@ -752,6 +754,14 @@ router.patch('/settings', async (req, res) => {
 
     if (seasonKickoffDate !== undefined) {
       settings.seasonKickoffDate = seasonKickoffDate ? new Date(seasonKickoffDate) : null;
+    }
+
+    if (aboutImageUrl !== undefined) {
+      settings.aboutImageUrl = aboutImageUrl.trim();
+    }
+
+    if (aboutImageCaption !== undefined) {
+      settings.aboutImageCaption = aboutImageCaption.trim();
     }
 
     settings.lastUpdatedBy = req.user?.id || null;
@@ -790,6 +800,55 @@ router.post('/settings/broadcast-transfer-window', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// 8b. POST /api/admin/about-image - Dedicated Cloudinary Uploader & Updater for About Section Showcase Image
+router.post('/about-image', (req, res) => {
+  galleryUpload.single('image')(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      console.error('[Cloudinary About Image Upload Error]:', uploadErr);
+      return res.status(400).json({ success: false, error: uploadErr.message });
+    }
+
+    try {
+      const { imageUrl, caption } = req.body;
+      let finalUrl = '';
+
+      if (req.file) {
+        finalUrl = req.file.path || req.file.secure_url;
+      } else if (imageUrl) {
+        finalUrl = imageUrl.trim();
+      }
+
+      if (!finalUrl) {
+        return res.status(400).json({ success: false, error: 'No image file or URL provided.' });
+      }
+
+      const settings = await LeagueSettings.getSettings();
+      settings.aboutImageUrl = finalUrl;
+      if (caption !== undefined && caption !== null) {
+        settings.aboutImageCaption = caption.trim();
+      }
+      settings.lastUpdatedBy = req.user?.id || null;
+      await settings.save();
+
+      // Emit realtime socket event to update Homepage, About page, and all dashboards instantly
+      broadcastLeagueSettingsUpdate(settings);
+
+      return res.json({
+        success: true,
+        message: 'About section image updated successfully.',
+        data: {
+          aboutImageUrl: settings.aboutImageUrl,
+          aboutImageCaption: settings.aboutImageCaption,
+          settings
+        }
+      });
+    } catch (err) {
+      console.error('[Admin Update About Image Error]:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
 });
 
 // ============================================================================

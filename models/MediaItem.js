@@ -13,16 +13,7 @@ const mediaItemSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: [
-      'All',
-      'Matchday Action',
-      'Teams',
-      'Behind The Scenes',
-      'Awards & Scouts',
-      'Hero Banner',
-      'News',
-      'About Highlight'
-    ],
+    trim: true,
     default: 'Matchday Action',
     index: true
   },

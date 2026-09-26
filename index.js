@@ -75,6 +75,44 @@ app.use('/api/podcasts', podcastRoutes);
 app.use('/api/sponsors', sponsorRoutes);
 app.use('/api/gallery', galleryRoutes);
 
+// Public Settings & Site Content Endpoints
+app.get('/api/settings', async (req, res) => {
+  try {
+    const LeagueSettings = require('./models/LeagueSettings');
+    const settings = await LeagueSettings.getSettings();
+    res.json({
+      success: true,
+      data: {
+        competitionName: settings.competitionName,
+        maxSquadSize: settings.maxSquadSize || 35,
+        transferWindowStatus: settings.transferWindowStatus || 'closed',
+        registrationLocked: settings.registrationLocked || false,
+        seasonPhase: settings.seasonPhase || 'pre_season',
+        aboutImageUrl: settings.aboutImageUrl || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
+        aboutImageCaption: settings.aboutImageCaption || 'Youth talent competing in the Skouted Youth League Championship'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.get('/api/content/about', async (req, res) => {
+  try {
+    const LeagueSettings = require('./models/LeagueSettings');
+    const settings = await LeagueSettings.getSettings();
+    res.json({
+      success: true,
+      data: {
+        aboutImageUrl: settings.aboutImageUrl || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
+        aboutImageCaption: settings.aboutImageCaption || 'Youth talent competing in the Skouted Youth League Championship'
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({

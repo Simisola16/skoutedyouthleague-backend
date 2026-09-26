@@ -17,7 +17,9 @@ router.get('/settings', async (req, res) => {
         initialRegistrationClosesAt: settings.initialRegistrationClosesAt,
         transferWindowClosesAt: settings.transferWindowClosesAt,
         transferWindowOpenedAt: settings.transferWindowOpenedAt,
-        isRegistrationOpen: settings.checkRegistrationEligibility().allowed
+        isRegistrationOpen: settings.checkRegistrationEligibility().allowed,
+        aboutImageUrl: settings.aboutImageUrl || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
+        aboutImageCaption: settings.aboutImageCaption || 'Youth talent competing in the Skouted Youth League Championship'
       }
     });
   } catch (err) {

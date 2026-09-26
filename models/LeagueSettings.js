@@ -43,6 +43,14 @@ const leagueSettingsSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  aboutImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80'
+  },
+  aboutImageCaption: {
+    type: String,
+    default: 'Youth talent competing in the Skouted Youth League Championship'
+  },
   lastUpdatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -63,8 +71,16 @@ leagueSettingsSchema.statics.getSettings = async function() {
       maxSquadSize: 35,
       transferWindowStatus: 'closed',
       registrationLocked: false,
-      seasonPhase: 'pre_season'
+      seasonPhase: 'pre_season',
+      aboutImageUrl: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
+      aboutImageCaption: 'Youth talent competing in the Skouted Youth League Championship'
     });
+  } else if (!settings.aboutImageUrl) {
+    settings.aboutImageUrl = 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80';
+    if (!settings.aboutImageCaption) {
+      settings.aboutImageCaption = 'Youth talent competing in the Skouted Youth League Championship';
+    }
+    await settings.save();
   }
   return settings;
 };
