@@ -834,6 +834,17 @@ router.get('/stats/overview', async (req, res) => {
   }
 });
 
+// GET /api/admin/email-quota - View Resend dual-key quota & failover rotation status
+router.get('/email-quota', async (req, res) => {
+  try {
+    const quota = await EmailService.getQuotaStatus();
+    res.json({ success: true, quota });
+  } catch (err) {
+    console.error('[Admin Email Quota Error]:', err);
+    res.status(500).json({ success: false, error: 'Failed to retrieve email quota status' });
+  }
+});
+
 // ============================================================================
 // 10. CENTRALIZED ADMIN MEDIA & GALLERY MANAGEMENT
 // ============================================================================

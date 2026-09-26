@@ -1,12 +1,16 @@
 const { Resend } = require('resend');
 const nodemailer = require('nodemailer');
+const SystemCounter = require('../models/SystemCounter');
 
-const apiKey = process.env.RESEND_API_KEY || '';
+// Dual Resend API Key Configuration (Free tier 100 emails/day per key)
+const primaryKey = process.env.RESEND_PRIMARY_KEY || process.env.RESEND_API_KEY || '';
+const backupKey = process.env.RESEND_BACKUP_KEY || '';
 const emailFrom = process.env.EMAIL_FROM || 'Skouted League <tournaments@thevillagecoders.com>';
 
-const resend = apiKey ? new Resend(apiKey) : null;
+const primaryResend = primaryKey ? new Resend(primaryKey) : null;
+const backupResend = backupKey ? new Resend(backupKey) : null;
 
-// Configure SMTP transport if credentials are provided in environment
+// Configure SMTP transport fallback if credentials are provided in environment
 let smtpTransporter = null;
 if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
   smtpTransporter = nodemailer.createTransport({
@@ -29,21 +33,20 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
 }
 
 /**
- * Utility to identify HTTP 429 Rate Limit responses from Resend or SMTP
+ * Identify HTTP 429 Rate Limit responses or Daily Quota errors from Resend
  */
-function isRateLimitError(error) {
+function isRateLimitOrQuotaError(error) {
   if (!error) return false;
   if (typeof error === 'object') {
-    if (error.statusCode === 429 || error.status === 429 || error.name === 'rate_limit_exceeded') {
-      return true;
-    }
+    const code = error.statusCode || error.status || error.code;
+    if (code === 429 || code === '429') return true;
     const msg = String(error.message || error.name || error.code || JSON.stringify(error)).toLowerCase();
-    if (/429|rate\s*limit|too\s*many\s*requests|quota\s*exceeded/i.test(msg)) {
+    if (/429|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded/i.test(msg)) {
       return true;
     }
   }
   if (typeof error === 'string') {
-    if (/429|rate\s*limit|too\s*many\s*requests|quota\s*exceeded/i.test(error)) {
+    if (/429|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded/i.test(error)) {
       return true;
     }
   }
@@ -51,15 +54,179 @@ function isRateLimitError(error) {
 }
 
 /**
+ * Returns current UTC calendar date as "YYYY-MM-DD"
+ * Resend free-tier daily quotas reset at midnight UTC (00:00:00 UTC)
+ */
+function getTodayDateString() {
+  return new Date().toISOString().split('T')[0];
+}
+
+// In-memory cache for high-speed tracking and instant offline resilience
+let inMemoryQuota = {
+  date: getTodayDateString(),
+  primaryCount: 0,
+  backupCount: 0,
+  primaryExhausted: false,
+  exhaustedReason: null,
+  lastDispatchedAt: null
+};
+
+/**
+ * Synchronize daily quota state from MongoDB SystemCounter collection
+ */
+async function syncDailyCounter() {
+  const today = getTodayDateString();
+
+  // If calendar day rolled over, automatically reset in-memory counter for the new day
+  if (inMemoryQuota.date !== today) {
+    console.log(`[EmailService 🌅 Midnight Rollover]: Calendar date changed from ${inMemoryQuota.date} to ${today}. Resetting active key to RESEND_PRIMARY_KEY.`);
+    inMemoryQuota = {
+      date: today,
+      primaryCount: 0,
+      backupCount: 0,
+      primaryExhausted: false,
+      exhaustedReason: null,
+      lastDispatchedAt: null
+    };
+  }
+
+  try {
+    if (SystemCounter.db && SystemCounter.db.readyState === 1) {
+      let doc = await SystemCounter.findOne({ date: today });
+      if (!doc) {
+        doc = await SystemCounter.create({
+          date: today,
+          primaryCount: inMemoryQuota.primaryCount,
+          backupCount: inMemoryQuota.backupCount,
+          primaryExhausted: inMemoryQuota.primaryExhausted,
+          exhaustedReason: inMemoryQuota.exhaustedReason
+        });
+      }
+      inMemoryQuota.primaryCount = doc.primaryCount || 0;
+      inMemoryQuota.backupCount = doc.backupCount || 0;
+      inMemoryQuota.primaryExhausted = Boolean(doc.primaryExhausted);
+      inMemoryQuota.exhaustedReason = doc.exhaustedReason || null;
+      inMemoryQuota.lastDispatchedAt = doc.lastDispatchedAt || null;
+      return doc;
+    }
+  } catch (err) {
+    console.warn(`[EmailService Warning - SystemCounter DB Sync]: ${err.message}. Relying on in-memory tracker.`);
+  }
+
+  return inMemoryQuota;
+}
+
+/**
+ * Flag primary Resend key as exhausted for the remainder of today
+ */
+async function markPrimaryExhausted(reason) {
+  const today = getTodayDateString();
+  inMemoryQuota.date = today;
+  inMemoryQuota.primaryExhausted = true;
+  inMemoryQuota.exhaustedReason = reason;
+
+  console.warn(`[EmailService 🛑 Primary Key Exhausted]: Flagged primary key as exhausted for ${today}. Reason: ${reason}`);
+
+  try {
+    if (SystemCounter.db && SystemCounter.db.readyState === 1) {
+      await SystemCounter.updateOne(
+        { date: today },
+        {
+          $set: {
+            primaryExhausted: true,
+            exhaustedReason: reason
+          }
+        },
+        { upsert: true }
+      );
+    }
+  } catch (err) {
+    console.error(`[EmailService Error - markPrimaryExhausted]: ${err.message}`);
+  }
+}
+
+/**
+ * Record successful dispatch and increment appropriate counter
+ */
+async function recordDispatchSuccess(keyUsed, recipients, subject, resendId) {
+  const today = getTodayDateString();
+  inMemoryQuota.date = today;
+  inMemoryQuota.lastDispatchedAt = new Date();
+
+  if (keyUsed === 'primary') {
+    inMemoryQuota.primaryCount++;
+    if (inMemoryQuota.primaryCount >= 100) {
+      inMemoryQuota.primaryExhausted = true;
+      inMemoryQuota.exhaustedReason = 'Daily quota threshold of 100 reached';
+      console.log(`[EmailService 🎯 100 Emails Reached]: Primary key reached 100 emails today. Automatically rotating to BACKUP key for subsequent emails.`);
+    }
+  } else if (keyUsed === 'backup') {
+    inMemoryQuota.backupCount++;
+  }
+
+  try {
+    if (SystemCounter.db && SystemCounter.db.readyState === 1) {
+      const update = {
+        $set: {
+          lastDispatchedAt: new Date()
+        },
+        $inc: {
+          ...(keyUsed === 'primary' ? { primaryCount: 1 } : {}),
+          ...(keyUsed === 'backup' ? { backupCount: 1 } : {})
+        },
+        $push: {
+          dispatches: {
+            $each: [{
+              timestamp: new Date(),
+              keyUsed,
+              recipients: Array.isArray(recipients) ? recipients : [recipients],
+              subject: subject || '',
+              status: 'success',
+              resendId: resendId || ''
+            }],
+            $slice: -200 // Keep last 200 logs per calendar day
+          }
+        }
+      };
+
+      if (keyUsed === 'primary' && inMemoryQuota.primaryCount >= 100) {
+        update.$set.primaryExhausted = true;
+        update.$set.exhaustedReason = 'Daily quota threshold of 100 reached';
+      }
+
+      await SystemCounter.updateOne({ date: today }, update, { upsert: true });
+    }
+  } catch (err) {
+    console.error(`[EmailService Error - recordDispatchSuccess]: ${err.message}`);
+  }
+}
+
+// Scheduled check for automatic midnight UTC reset
+function scheduleMidnightReset() {
+  const now = new Date();
+  const nextMidnightUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 1));
+  const delay = Math.max(1000, nextMidnightUtc.getTime() - now.getTime());
+
+  const timer = setTimeout(async () => {
+    console.log(`[EmailService 🌙 Midnight UTC]: Resetting daily quota counter back to RESEND_PRIMARY_KEY.`);
+    try {
+      await syncDailyCounter();
+    } catch (e) {
+      // ignore
+    }
+    scheduleMidnightReset();
+  }, delay);
+  if (timer.unref) timer.unref();
+}
+scheduleMidnightReset();
+
+/**
  * Intelligent Rate Limiting & Auto-Retry Queue for Transactional Emails
- * Controls throughput (max 3-4 req/sec to stay safely under Resend's 10 req/s limit)
- * and applies Exponential Backoff with Jitter whenever a 429 rate limit is encountered.
  */
 class EmailRateLimiterQueue {
   constructor(options = {}) {
-    // 250ms spacing ensures a steady rate of ~4 req/s max, completely eliminating burst 429s
     this.minIntervalMs = options.minIntervalMs || parseInt(process.env.EMAIL_MIN_INTERVAL_MS || '250', 10);
-    this.maxRetries = options.maxRetries || 5;
+    this.maxRetries = options.maxRetries || 3;
     this.queue = [];
     this.isProcessing = false;
     this.lastDispatchedAt = 0;
@@ -81,55 +248,27 @@ class EmailRateLimiterQueue {
     this.isProcessing = true;
 
     while (this.queue.length > 0) {
-      const item = this.queue[0]; // peek item
+      const item = this.queue[0];
 
-      // 1. If currently paused due to an upstream 429 rate limit backoff, wait until clear
       const now = Date.now();
       if (this.rateLimitPausedUntil > now) {
         const pauseTime = this.rateLimitPausedUntil - now;
-        console.log(`[EmailQueue]: Queue paused for ${pauseTime}ms due to active rate-limit backoff window...`);
+        console.log(`[EmailQueue]: Queue paused for ${pauseTime}ms due to active rate-limit window...`);
         await new Promise(r => setTimeout(r, pauseTime));
       }
 
-      // 2. Enforce minimum interval between consecutive API dispatches
       const elapsedSinceLast = Date.now() - this.lastDispatchedAt;
       if (elapsedSinceLast < this.minIntervalMs) {
         await new Promise(r => setTimeout(r, this.minIntervalMs - elapsedSinceLast));
       }
 
-      // Remove item to execute
       this.queue.shift();
       this.lastDispatchedAt = Date.now();
 
       try {
         const result = await item.taskFn();
-
-        // Check if provider returned a 429 in response body
-        if (result && (!result.success && isRateLimitError(result.error))) {
-          if (item.retries < this.maxRetries) {
-            item.retries++;
-            // Exponential backoff with random jitter (e.g. 1.2s, 2.5s, 5s, 10s)
-            const jitter = Math.floor(Math.random() * 400);
-            const backoffMs = Math.min(12000, (1000 * Math.pow(2, item.retries - 1)) + jitter);
-            console.warn(`[EmailQueue ⚠️ Rate Limit 429]: Resend 10 req/s rate limit reached. Pausing queue & backing off for ${backoffMs}ms before retry ${item.retries}/${this.maxRetries}...`);
-            this.rateLimitPausedUntil = Date.now() + backoffMs;
-            this.queue.unshift(item); // Re-insert at the head of queue
-            continue;
-          }
-        }
-
         item.resolve(result);
       } catch (err) {
-        if (isRateLimitError(err) && item.retries < this.maxRetries) {
-          item.retries++;
-          const jitter = Math.floor(Math.random() * 400);
-          const backoffMs = Math.min(12000, (1000 * Math.pow(2, item.retries - 1)) + jitter);
-          console.warn(`[EmailQueue ⚠️ Rate Limit 429 Exception]: ${err.message}. Backing off for ${backoffMs}ms before retry ${item.retries}/${this.maxRetries}...`);
-          this.rateLimitPausedUntil = Date.now() + backoffMs;
-          this.queue.unshift(item); // Re-insert at the head of queue
-          continue;
-        }
-
         item.reject(err);
       }
     }
@@ -139,19 +278,16 @@ class EmailRateLimiterQueue {
 }
 
 // Global queue singleton
-const emailQueue = new EmailRateLimiterQueue({ minIntervalMs: 250, maxRetries: 5 });
+const emailQueue = new EmailRateLimiterQueue({ minIntervalMs: 250, maxRetries: 3 });
 
-// Internal raw sender that interacts with Resend and SMTP
-async function rawSendMail({ to, subject, html, text }) {
-  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
-  if (recipients.length === 0) {
-    return { success: false, error: 'No recipients provided' };
-  }
-
-  // 1. Try Resend API first (if key configured)
-  if (resend) {
+/**
+ * Dispatch email via Backup Resend client
+ */
+async function dispatchWithBackup({ recipients, subject, html, text, failoverReason }) {
+  if (backupResend) {
     try {
-      const res = await resend.emails.send({
+      console.log(`[EmailService 🔄 Backup Dispatch]: Dispatching to ${recipients.join(', ')} via BACKUP Resend key (Reason: ${failoverReason || 'rotation'})...`);
+      const backupRes = await backupResend.emails.send({
         from: emailFrom,
         to: recipients,
         subject,
@@ -159,29 +295,31 @@ async function rawSendMail({ to, subject, html, text }) {
         text: text || ''
       });
 
-      if (!res.error) {
-        console.log(`[EmailService]: Successfully dispatched email via Resend to ${recipients.join(', ')} (ID: ${res.data?.id || 'ok'})`);
-        return { success: true, provider: 'resend', id: res.data?.id };
+      if (!backupRes.error) {
+        await recordDispatchSuccess('backup', recipients, subject, backupRes.data?.id);
+        console.log(`[EmailService ✅ Backup Dispatched]: Successfully sent via Resend BACKUP to ${recipients.join(', ')} (ID: ${backupRes.data?.id || 'ok'}) [Backup Count: ${inMemoryQuota.backupCount}]`);
+        return { success: true, provider: 'resend_backup', id: backupRes.data?.id, failover: true };
       }
 
-      console.warn(`[EmailService Warning - Resend Provider Error]: ${res.error?.message || JSON.stringify(res.error)}`);
-
-      // If rate limited, signal the queue to back off and retry
-      if (isRateLimitError(res.error)) {
-        return { success: false, error: res.error, isRateLimit: true };
-      }
-    } catch (resendErr) {
-      console.warn(`[EmailService Warning - Resend Exception]: ${resendErr.message}`);
-      if (isRateLimitError(resendErr)) {
-        return { success: false, error: resendErr, isRateLimit: true };
-      }
+      console.warn(`[EmailService Warning - Resend Backup Error]: ${backupRes.error?.message || JSON.stringify(backupRes.error)}`);
+    } catch (backupErr) {
+      console.error(`[EmailService Error - Resend Backup Exception]: ${backupErr.message}`);
     }
+  } else {
+    console.warn('[EmailService Warning]: RESEND_BACKUP_KEY is not configured.');
   }
 
-  // 2. Fallback to SMTP / Nodemailer if configured
+  // Fallback to SMTP if configured
+  return await dispatchWithSmtp({ recipients, subject, html, text });
+}
+
+/**
+ * Dispatch email via SMTP fallback
+ */
+async function dispatchWithSmtp({ recipients, subject, html, text }) {
   if (smtpTransporter) {
     try {
-      console.log(`[EmailService]: Attempting secondary SMTP delivery to ${recipients.join(', ')}...`);
+      console.log(`[EmailService]: Attempting tertiary SMTP delivery to ${recipients.join(', ')}...`);
       const info = await smtpTransporter.sendMail({
         from: emailFrom,
         to: recipients.join(', '),
@@ -196,13 +334,80 @@ async function rawSendMail({ to, subject, html, text }) {
     }
   }
 
-  // 3. Quota / Unconfigured Provider Fallback Notice
-  console.warn(`[EmailService Notice]: Email to ${recipients.join(', ')} logged to console due to quota / unverified domain.`);
+  console.warn(`[EmailService Notice]: Email to ${recipients.join(', ')} logged to console due to quota limits on all providers.`);
   return {
     success: false,
-    error: 'Email provider quota reached (Resend 429). In-app verification active.',
+    error: 'Email quota reached on all keys. In-app verification active.',
     quotaExceeded: true
   };
+}
+
+/**
+ * Primary dispatch engine with 100/day auto-rotation and instant 429 failover
+ */
+async function rawSendMail({ to, subject, html, text }) {
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : [to].filter(Boolean);
+  if (recipients.length === 0) {
+    return { success: false, error: 'No recipients provided' };
+  }
+
+  // Sync latest quota state for today
+  await syncDailyCounter();
+
+  const isPrimaryExhausted = inMemoryQuota.primaryExhausted || inMemoryQuota.primaryCount >= 100;
+
+  // 1. If primary key is healthy and under 100 dispatches today, use PRIMARY
+  if (!isPrimaryExhausted && primaryResend) {
+    try {
+      console.log(`[EmailService]: Sending via Resend PRIMARY (${inMemoryQuota.primaryCount + 1}/100) to ${recipients.join(', ')}...`);
+      const res = await primaryResend.emails.send({
+        from: emailFrom,
+        to: recipients,
+        subject,
+        html,
+        text: text || ''
+      });
+
+      if (!res.error) {
+        await recordDispatchSuccess('primary', recipients, subject, res.data?.id);
+        console.log(`[EmailService ✅ Primary Dispatched]: Successfully sent via Resend PRIMARY to ${recipients.join(', ')} (ID: ${res.data?.id || 'ok'}) [Daily Primary: ${inMemoryQuota.primaryCount}/100]`);
+        return { success: true, provider: 'resend_primary', id: res.data?.id };
+      }
+
+      // Check if primary returned 429 Too Many Requests or quota exceeded
+      const errMsg = res.error?.message || JSON.stringify(res.error);
+      const isQuota = isRateLimitOrQuotaError(res.error);
+
+      if (isQuota) {
+        console.warn(`[EmailService ⚠️ FAILOVER TRIGGERED]: Resend PRIMARY returned rate limit / quota error: ${errMsg}. Flagging primary key as exhausted for today and immediately retrying with BACKUP key...`);
+        await markPrimaryExhausted(`Resend 429/Quota: ${errMsg}`);
+        return await dispatchWithBackup({ recipients, subject, html, text, failoverReason: errMsg });
+      }
+
+      console.warn(`[EmailService Warning - Resend Primary Error]: ${errMsg}. Attempting failover to backup key...`);
+      return await dispatchWithBackup({ recipients, subject, html, text, failoverReason: errMsg });
+    } catch (resendErr) {
+      console.warn(`[EmailService ⚠️ FAILOVER Exception]: Primary Resend key threw exception: ${resendErr.message}`);
+      if (isRateLimitOrQuotaError(resendErr)) {
+        await markPrimaryExhausted(`Resend Exception: ${resendErr.message}`);
+      }
+      return await dispatchWithBackup({ recipients, subject, html, text, failoverReason: resendErr.message });
+    }
+  }
+
+  // 2. If primary reached 100/day or is flagged exhausted, rotate directly to BACKUP
+  if (isPrimaryExhausted) {
+    console.log(`[EmailService 🔄 Daily Rotation]: Primary key exhausted/limit reached (${inMemoryQuota.primaryCount}/100). Routing to BACKUP Resend key...`);
+    return await dispatchWithBackup({ recipients, subject, html, text, failoverReason: 'Primary 100/day quota reached' });
+  }
+
+  // 3. If primary key is unconfigured, try backup directly
+  if (backupResend) {
+    return await dispatchWithBackup({ recipients, subject, html, text, failoverReason: 'Primary unconfigured' });
+  }
+
+  // 4. Fallback to SMTP
+  return await dispatchWithSmtp({ recipients, subject, html, text });
 }
 
 // Unified multi-tier email dispatcher (routed through the rate-limited queue)
@@ -662,6 +867,63 @@ class EmailService {
       console.error('[EmailService Error - Transfer Window]:', error.message);
       return { success: false, error: error.message };
     }
+  }
+
+  // 9. Daily Email Quota & Rotation Status
+  static async getQuotaStatus() {
+    await syncDailyCounter();
+    const today = getTodayDateString();
+    const isPrimaryExhausted = inMemoryQuota.primaryExhausted || inMemoryQuota.primaryCount >= 100;
+    return {
+      date: today,
+      primaryCount: inMemoryQuota.primaryCount,
+      backupCount: inMemoryQuota.backupCount,
+      totalDispatchedToday: inMemoryQuota.primaryCount + inMemoryQuota.backupCount,
+      dailyQuotaLimit: 100,
+      primaryRemaining: Math.max(0, 100 - inMemoryQuota.primaryCount),
+      primaryExhausted: isPrimaryExhausted,
+      exhaustedReason: inMemoryQuota.exhaustedReason,
+      activeKey: isPrimaryExhausted ? 'backup' : 'primary',
+      lastDispatchedAt: inMemoryQuota.lastDispatchedAt,
+      primaryKeyConfigured: Boolean(primaryResend),
+      backupKeyConfigured: Boolean(backupResend),
+      senderEmail: emailFrom
+    };
+  }
+
+  // 10. Manual Quota Reset (for admin or testing)
+  static async resetDailyQuota(dateOverride) {
+    const today = dateOverride || getTodayDateString();
+    inMemoryQuota = {
+      date: today,
+      primaryCount: 0,
+      backupCount: 0,
+      primaryExhausted: false,
+      exhaustedReason: null,
+      lastDispatchedAt: null
+    };
+
+    if (SystemCounter.db && SystemCounter.db.readyState === 1) {
+      await SystemCounter.updateOne(
+        { date: today },
+        {
+          $set: {
+            primaryCount: 0,
+            backupCount: 0,
+            primaryExhausted: false,
+            exhaustedReason: null
+          }
+        },
+        { upsert: true }
+      );
+    }
+    return await this.getQuotaStatus();
+  }
+
+  // 11. Simulate 429 Quota Exhaustion & Immediate Failover
+  static async simulateFailover(reason = 'Simulated 429 Quota Exhaustion') {
+    await markPrimaryExhausted(reason);
+    return await this.getQuotaStatus();
   }
 }
 
