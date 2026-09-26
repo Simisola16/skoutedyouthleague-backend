@@ -445,6 +445,9 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
   <div class="container">
     <div class="card">
       <div class="header">
+        <div style="margin-bottom: 12px; text-align: center;">
+          <img src="https://api.skoutedyouthleague.com/logo.png" alt="Skouted Youth League" style="width: 68px; height: auto; max-height: 78px; margin: 0 auto; display: block; filter: drop-shadow(0 4px 10px rgba(0, 230, 118, 0.2));" />
+        </div>
         <div class="logo-badge">${badgeText}</div>
         <h1 style="margin:0; font-size:22px; font-weight:900; color:#FFFFFF; letter-spacing:-0.5px;">SKOUTED LEAGUE</h1>
         <p style="margin:4px 0 0 0; font-size:12px; color:#94A3B8;">Premier Youth Football Championship & Social Scouting</p>
@@ -869,7 +872,157 @@ class EmailService {
     }
   }
 
-  // 9. Daily Email Quota & Rotation Status
+  // 9. Alert Admin of New Team Registration with One-Click Direct Approval
+  static async sendNewTeamRegistrationAlert({
+    recipientEmail = 'maroophadek@gmail.com',
+    team,
+    approveUrl,
+    rejectUrl,
+    adminPortalUrl
+  }) {
+    try {
+      if (!recipientEmail) return { success: false, error: 'No recipient provided' };
+
+      const teamName = team.name || 'New Team';
+      const shortCode = team.shortCode || 'N/A';
+      const managerName = team.managerName || 'Not specified';
+      const managerEmail = team.managerEmail || 'Not specified';
+      const managerPhone = team.managerPhone || 'Not specified';
+      const homeGround = team.homeGround || 'Not specified';
+      const registeredAt = team.createdAt ? new Date(team.createdAt).toUTCString() : new Date().toUTCString();
+      const crestUrl = team.logo && (team.logo.startsWith('http') || team.logo.startsWith('/')) ? team.logo : null;
+
+      const subject = `⚽ New Club Registration: ${teamName} (${shortCode}) - Accreditation Required`;
+
+      const content = `
+        <div style="background: linear-gradient(135deg, rgba(0, 230, 118, 0.12) 0%, rgba(56, 189, 248, 0.06) 100%); border: 1px solid rgba(0, 230, 118, 0.3); border-radius: 16px; padding: 20px; margin-bottom: 24px;">
+          <div style="margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #00E676; text-transform: uppercase; background: rgba(0, 230, 118, 0.15); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(0, 230, 118, 0.3); display: inline-block;">
+              ⏳ PENDING ACCREDITATION
+            </span>
+            <span style="font-size: 11px; color: #94A3B8; font-family: monospace; float: right; margin-top: 4px;">
+              ${registeredAt}
+            </span>
+          </div>
+          <div style="clear: both;"></div>
+          <h2 style="color: #FFFFFF; font-size: 22px; font-weight: 900; margin: 12px 0 6px 0; letter-spacing: -0.5px;">
+            ${teamName} <span style="color: #00E676; font-size: 16px; font-weight: 800;">[${shortCode}]</span>
+          </h2>
+          <p style="color: #CBD5E1; font-size: 13px; margin: 0; line-height: 1.5;">
+            A new football club has completed portal registration and submitted their official accreditation application for the <strong>Skouted Youth League Championship Season 2026/2027</strong>.
+          </p>
+        </div>
+
+        <!-- Club Profile Overview -->
+        <h3 style="color: #FFFFFF; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; margin: 24px 0 10px 0; border-bottom: 1px solid #232733; padding-bottom: 6px;">
+          🏟️ Club Details
+        </h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 22px; font-size: 13px;">
+          ${crestUrl ? `
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B; width: 35%;">Club Crest</td>
+            <td style="padding: 10px 0; text-align: right;">
+              <img src="${crestUrl}" alt="${teamName}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 8px; background: #0D0F14; padding: 4px; border: 1px solid #283042; display: inline-block;" />
+            </td>
+          </tr>` : ''}
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B; width: 35%;">Club Name</td>
+            <td style="padding: 10px 0; color: #FFFFFF; font-weight: 700; text-align: right;">${teamName}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Short Code</td>
+            <td style="padding: 10px 0; color: #00E676; font-weight: 800; font-family: monospace; text-align: right;">${shortCode}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Home Ground</td>
+            <td style="padding: 10px 0; color: #E2E8F0; text-align: right;">${homeGround}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Kit Colors</td>
+            <td style="padding: 10px 0; color: #E2E8F0; text-align: right;">
+              Home: <span style="display:inline-block; width:12px; height:12px; background:${team.homeKitColor || '#00E676'}; border-radius:50%; vertical-align:middle; border:1px solid #444;"></span> &nbsp;|&nbsp; 
+              Away: <span style="display:inline-block; width:12px; height:12px; background:${team.awayKitColor || '#3B82F6'}; border-radius:50%; vertical-align:middle; border:1px solid #444;"></span>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Manager / Point of Contact Details -->
+        <h3 style="color: #FFFFFF; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; margin: 24px 0 10px 0; border-bottom: 1px solid #232733; padding-bottom: 6px;">
+          👤 Team Manager & Point of Contact
+        </h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 24px; font-size: 13px;">
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B; width: 35%;">Manager / Coach</td>
+            <td style="padding: 10px 0; color: #FFFFFF; font-weight: 700; text-align: right;">${managerName}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Official Email</td>
+            <td style="padding: 10px 0; text-align: right;">
+              <a href="mailto:${managerEmail}" style="color: #38BDF8; text-decoration: none; font-weight: 600;">${managerEmail}</a>
+            </td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Phone / WhatsApp</td>
+            <td style="padding: 10px 0; text-align: right;">
+              <a href="tel:${managerPhone}" style="color: #00E676; text-decoration: none; font-weight: 600;">${managerPhone}</a>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Interactive Direct Approval Action Center -->
+        <div style="background-color: #171B26; border: 2px solid #00E676; border-radius: 16px; padding: 26px 20px; text-align: center; margin: 28px 0; box-shadow: 0 10px 30px rgba(0, 230, 118, 0.15);">
+          <div style="font-size: 11px; font-weight: 800; color: #00E676; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px;">
+            ⚡ Quick Accreditation Action
+          </div>
+          <h4 style="color: #FFFFFF; font-size: 18px; margin: 0 0 10px 0; font-weight: 900;">
+            Accept & Verify This Club Immediately
+          </h4>
+          <p style="color: #94A3B8; font-size: 12px; margin: 0 0 20px 0; line-height: 1.5;">
+            Clicking the button below directly verifies <strong>${teamName}</strong>, unlocks player roster registrations for the manager, and sends the manager their official welcome accreditation email.
+          </p>
+          
+          <div style="margin: 18px 0;">
+            <a href="${approveUrl}" class="btn" style="display: inline-block; background: linear-gradient(135deg, #00E676 0%, #00B359 100%); color: #07120B !important; font-weight: 900; font-size: 15px; text-decoration: none; padding: 14px 34px; border-radius: 12px; text-transform: uppercase; letter-spacing: 0.5px; box-shadow: 0 4px 15px rgba(0,230,118,0.4);">
+              ✅ Accept & Approve Team &rarr;
+            </a>
+          </div>
+
+          <div style="margin-top: 18px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 12px; color: #94A3B8;">
+            <a href="${adminPortalUrl}" style="color: #38BDF8; text-decoration: none; font-weight: 600; margin-right: 16px;">
+              🛡️ View in Admin Portal
+            </a>
+            <span style="color: #475569;">|</span>
+            <a href="${rejectUrl}" style="color: #F87171; text-decoration: none; font-weight: 600; margin-left: 16px;">
+              ❌ Reject Application
+            </a>
+          </div>
+        </div>
+
+        <p style="color: #64748B; font-size: 11px; text-align: center; margin-top: 16px; line-height: 1.5;">
+          This secure automated dispatch was sent directly to <strong>${recipientEmail}</strong> for tournament administration.
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: `New Team Registration: ${teamName}`,
+        preheader: `New Club Registration: ${teamName} (${shortCode}) registered. Review details and accept directly.`,
+        content,
+        badgeText: 'CLUB REGISTRATION ALERT'
+      });
+
+      return await dispatchMail({
+        to: recipientEmail,
+        subject,
+        html,
+        text: `New Team Registration: ${teamName} (${shortCode})\nManager: ${managerName} (${managerEmail}, ${managerPhone})\nApprove directly: ${approveUrl}\nAdmin portal: ${adminPortalUrl}`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - New Team Registration Alert]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // 10. Daily Email Quota & Rotation Status
   static async getQuotaStatus() {
     await syncDailyCounter();
     const today = getTodayDateString();

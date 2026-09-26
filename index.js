@@ -79,6 +79,12 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/uploads', mediaRoutes);
 app.use('/uploads', mediaRoutes);
 
+// Static assets (Logo, brand graphics, etc.)
+app.use(express.static(path.join(__dirname, 'public')));
+app.get('/logo.png', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'logo.png'));
+});
+
 // Public Settings & Site Content Endpoints
 app.get('/api/settings', async (req, res) => {
   try {
