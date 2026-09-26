@@ -21,6 +21,9 @@ const fanRoutes = require('./routes/fanRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const teamManagerRoutes = require('./routes/teamManagerRoutes');
 const leagueRoutes = require('./routes/leagueRoutes');
+const newsRoutes = require('./routes/newsRoutes');
+const podcastRoutes = require('./routes/podcastRoutes');
+const sponsorRoutes = require('./routes/sponsorRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -66,6 +69,9 @@ app.use('/api/stats', statsRoutes);
 app.use('/api/fans', fanRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/league', leagueRoutes);
+app.use('/api/news', newsRoutes);
+app.use('/api/podcasts', podcastRoutes);
+app.use('/api/sponsors', sponsorRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
