@@ -10,16 +10,17 @@ router.get('/', async (req, res) => {
 
     const filter = { isPublished: true };
 
-    if (category && category !== 'All') {
-      filter.category = category;
+    if (category && category !== 'All' && category !== 'undefined' && category !== 'null' && category.trim() !== '') {
+      filter.category = category.trim();
     }
 
-    if (search) {
+    if (search && search !== 'undefined' && search !== 'null' && search.trim() !== '') {
+      const cleanSearch = search.trim();
       filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { caption: { $regex: search, $options: 'i' } },
-        { matchTag: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } }
+        { title: { $regex: cleanSearch, $options: 'i' } },
+        { caption: { $regex: cleanSearch, $options: 'i' } },
+        { matchTag: { $regex: cleanSearch, $options: 'i' } },
+        { tags: { $in: [new RegExp(cleanSearch, 'i')] } }
       ];
     }
 

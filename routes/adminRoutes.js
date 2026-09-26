@@ -914,21 +914,24 @@ router.get('/media', async (req, res) => {
     const { category, search, status, limit = 50, page = 1 } = req.query;
     const filter = {};
 
-    if (category && category !== 'All') {
-      filter.category = category;
+    if (category && category !== 'All' && category !== 'undefined' && category !== 'null' && category.trim() !== '') {
+      filter.category = category.trim();
     }
 
-    if (status === 'published') {
-      filter.isPublished = true;
-    } else if (status === 'draft') {
-      filter.isPublished = false;
+    if (status && status !== 'all' && status !== 'undefined' && status !== 'null') {
+      if (status === 'published') {
+        filter.isPublished = true;
+      } else if (status === 'draft') {
+        filter.isPublished = false;
+      }
     }
 
-    if (search) {
+    if (search && search !== 'undefined' && search !== 'null' && search.trim() !== '') {
+      const cleanSearch = search.trim();
       filter.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { caption: { $regex: search, $options: 'i' } },
-        { matchTag: { $regex: search, $options: 'i' } }
+        { title: { $regex: cleanSearch, $options: 'i' } },
+        { caption: { $regex: cleanSearch, $options: 'i' } },
+        { matchTag: { $regex: cleanSearch, $options: 'i' } }
       ];
     }
 
