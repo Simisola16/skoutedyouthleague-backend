@@ -92,10 +92,30 @@ async function recalculateStandings() {
   }
 }
 
-// 1. Get all fixtures (with filter options: status, date)
+// 1. Get all fixtures (with filter options: status, stage, featured, limit)
 router.get('/', async (req, res) => {
   try {
-    const { status, stage } = req.query;
+    const { status, stage, featured, limit } = req.query;
+
+    if (featured === 'true') {
+      const maxLimit = parseInt(limit || '3', 10);
+
+      const live = await Fixture.find({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'LIVE'] } })
+        .populate('homeTeam awayTeam')
+        .sort({ date: 1, time: 1 });
+
+      const upcoming = await Fixture.find({ status: 'UPCOMING' })
+        .populate('homeTeam awayTeam')
+        .sort({ date: 1, time: 1 });
+
+      const finished = await Fixture.find({ status: 'FT' })
+        .populate('homeTeam awayTeam')
+        .sort({ date: -1, time: -1 });
+
+      const prioritized = [...live, ...upcoming, ...finished].slice(0, maxLimit);
+      return res.json({ success: true, data: prioritized });
+    }
+
     const filter = {};
     if (status) filter.status = status;
     if (stage) filter.stage = stage;
