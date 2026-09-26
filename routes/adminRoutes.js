@@ -5,11 +5,12 @@ const Player = require('../models/Player');
 const Fixture = require('../models/Fixture');
 const User = require('../models/User');
 const LeagueSettings = require('../models/LeagueSettings');
+const MediaItem = require('../models/MediaItem');
 const EmailService = require('../services/emailService');
 const LeagueService = require('../services/leagueService');
 const { broadcastLeagueSettingsUpdate } = require('../services/socketService');
 const { requireAdmin } = require('../middleware/authMiddleware');
-const { upload } = require('../services/cloudinary');
+const { upload, galleryUpload, cloudinary } = require('../services/cloudinary');
 
 // All routes in this router require role: "admin"
 router.use(requireAdmin);
@@ -791,4 +792,316 @@ router.post('/settings/broadcast-transfer-window', async (req, res) => {
   }
 });
 
+// ============================================================================
+// 9. REAL-TIME STATS OVERVIEW FOR ADMIN DASHBOARD
+// GET /api/admin/stats/overview
+// ============================================================================
+router.get('/stats/overview', async (req, res) => {
+  try {
+    const [
+      totalTeams,
+      pendingApprovals,
+      approvedTeams,
+      totalPlayers,
+      totalFixtures,
+      activeFixtures,
+      totalMedia
+    ] = await Promise.all([
+      Team.countDocuments(),
+      Team.countDocuments({ verificationStatus: 'pending' }),
+      Team.countDocuments({ verificationStatus: 'approved' }),
+      Player.countDocuments(),
+      Fixture.countDocuments(),
+      Fixture.countDocuments({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'UPCOMING'] } }),
+      MediaItem.countDocuments()
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        totalTeams,
+        pendingApprovals,
+        approvedTeams,
+        totalPlayers,
+        totalFixtures,
+        activeFixtures,
+        totalMedia
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Stats Overview Error]:', err);
+    res.status(500).json({ success: false, error: 'Failed to retrieve admin stats overview' });
+  }
+});
+
+// ============================================================================
+// 10. CENTRALIZED ADMIN MEDIA & GALLERY MANAGEMENT
+// ============================================================================
+
+// GET /api/admin/media - Retrieve all media items with filtering and metrics
+router.get('/media', async (req, res) => {
+  try {
+    const { category, search, status, limit = 50, page = 1 } = req.query;
+    const filter = {};
+
+    if (category && category !== 'All') {
+      filter.category = category;
+    }
+
+    if (status === 'published') {
+      filter.isPublished = true;
+    } else if (status === 'draft') {
+      filter.isPublished = false;
+    }
+
+    if (search) {
+      filter.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { caption: { $regex: search, $options: 'i' } },
+        { matchTag: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    const parsedLimit = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 100);
+    const parsedPage = Math.max(parseInt(page, 10) || 1, 1);
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const [items, total, totalPublished, totalDraft] = await Promise.all([
+      MediaItem.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(parsedLimit)
+        .lean(),
+      MediaItem.countDocuments(filter),
+      MediaItem.countDocuments({ isPublished: true }),
+      MediaItem.countDocuments({ isPublished: false })
+    ]);
+
+    res.json({
+      success: true,
+      data: items,
+      summary: {
+        total,
+        totalPublished,
+        totalDraft
+      },
+      pagination: {
+        page: parsedPage,
+        limit: parsedLimit,
+        total,
+        pages: Math.ceil(total / parsedLimit)
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Get Media Error]:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch media assets' });
+  }
+});
+
+// POST /api/admin/media - Multi-file upload or manual entry directly to Cloudinary
+router.post('/media', (req, res) => {
+  galleryUpload.array('images', 20)(req, res, async (uploadErr) => {
+    if (uploadErr) {
+      console.error('[Cloudinary Upload Error]:', uploadErr);
+      return res.status(400).json({ success: false, error: uploadErr.message });
+    }
+
+    try {
+      const {
+        title = '',
+        caption = '',
+        category = 'Matchday Action',
+        matchTag = '',
+        tags = '',
+        isPublished = true,
+        directUrl = ''
+      } = req.body;
+
+      const parsedTags = typeof tags === 'string'
+        ? tags.split(',').map(t => t.trim()).filter(Boolean)
+        : Array.isArray(tags) ? tags : [];
+
+      const booleanPublished = String(isPublished) === 'true' || isPublished === true;
+
+      // Case A: Files uploaded through multer-storage-cloudinary
+      if (req.files && req.files.length > 0) {
+        const createdItems = await Promise.all(
+          req.files.map(async (file, idx) => {
+            const itemTitle = req.files.length > 1 && title
+              ? `${title} (${idx + 1})`
+              : (title || file.originalname.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' '));
+
+            return await MediaItem.create({
+              title: itemTitle,
+              caption: caption || '',
+              category: category || 'Matchday Action',
+              url: file.path || file.secure_url,
+              publicId: file.filename || '',
+              matchTag: matchTag || '',
+              tags: parsedTags,
+              isPublished: booleanPublished,
+              uploadedBy: req.user?.id || null
+            });
+          })
+        );
+
+        return res.status(201).json({
+          success: true,
+          message: `Successfully uploaded ${createdItems.length} media item(s).`,
+          data: createdItems
+        });
+      }
+
+      // Case B: Direct URL provided
+      if (directUrl || req.body.url) {
+        const targetUrl = directUrl || req.body.url;
+        const newItem = await MediaItem.create({
+          title: title || 'Media Asset',
+          caption: caption || '',
+          category: category || 'Matchday Action',
+          url: targetUrl,
+          publicId: req.body.publicId || '',
+          matchTag: matchTag || '',
+          tags: parsedTags,
+          isPublished: booleanPublished,
+          uploadedBy: req.user?.id || null
+        });
+
+        return res.status(201).json({
+          success: true,
+          message: 'Media asset registered successfully.',
+          data: newItem
+        });
+      }
+
+      return res.status(400).json({
+        success: false,
+        error: 'No files or image URL provided.'
+      });
+    } catch (err) {
+      console.error('[Admin Create Media Error]:', err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+});
+
+// PATCH /api/admin/media/:id - Edit media metadata
+router.patch('/media/:id', async (req, res) => {
+  try {
+    const { title, caption, category, matchTag, tags, isPublished } = req.body;
+    const updateData = {};
+
+    if (title !== undefined) updateData.title = title.trim();
+    if (caption !== undefined) updateData.caption = caption.trim();
+    if (category !== undefined) updateData.category = category;
+    if (matchTag !== undefined) updateData.matchTag = matchTag.trim();
+    if (tags !== undefined) {
+      updateData.tags = typeof tags === 'string'
+        ? tags.split(',').map(t => t.trim()).filter(Boolean)
+        : Array.isArray(tags) ? tags : [];
+    }
+    if (isPublished !== undefined) {
+      updateData.isPublished = Boolean(isPublished);
+    }
+
+    const updated = await MediaItem.findByIdAndUpdate(
+      req.params.id,
+      { $set: updateData },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ success: false, error: 'Media asset not found' });
+    }
+
+    res.json({
+      success: true,
+      message: 'Media asset updated successfully.',
+      data: updated
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// PATCH /api/admin/media/:id/toggle-publish - Toggle visibility
+router.patch('/media/:id/toggle-publish', async (req, res) => {
+  try {
+    const item = await MediaItem.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Media asset not found' });
+    }
+
+    item.isPublished = !item.isPublished;
+    await item.save();
+
+    res.json({
+      success: true,
+      message: `Media asset marked as ${item.isPublished ? 'Published' : 'Draft'}.`,
+      data: item
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/admin/media/:id - Delete single media item
+router.delete('/media/:id', async (req, res) => {
+  try {
+    const item = await MediaItem.findById(req.params.id);
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Media asset not found' });
+    }
+
+    // Attempt Cloudinary cleanup if publicId exists
+    if (item.publicId) {
+      try {
+        await cloudinary.uploader.destroy(item.publicId);
+      } catch (cErr) {
+        console.warn('[Cloudinary Delete Notice]:', cErr.message);
+      }
+    }
+
+    await MediaItem.findByIdAndDelete(req.params.id);
+
+    res.json({
+      success: true,
+      message: 'Media asset deleted successfully.'
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/media/bulk-delete - Delete multiple media items
+router.post('/media/bulk-delete', async (req, res) => {
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: 'Array of item IDs required' });
+    }
+
+    const items = await MediaItem.find({ _id: { $in: ids } });
+    for (const item of items) {
+      if (item.publicId) {
+        try {
+          await cloudinary.uploader.destroy(item.publicId);
+        } catch (e) {
+          // continue
+        }
+      }
+    }
+
+    await MediaItem.deleteMany({ _id: { $in: ids } });
+
+    res.json({
+      success: true,
+      message: `Successfully deleted ${items.length} media item(s).`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 module.exports = router;
+

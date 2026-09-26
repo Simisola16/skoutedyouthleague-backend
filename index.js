@@ -24,6 +24,7 @@ const leagueRoutes = require('./routes/leagueRoutes');
 const newsRoutes = require('./routes/newsRoutes');
 const podcastRoutes = require('./routes/podcastRoutes');
 const sponsorRoutes = require('./routes/sponsorRoutes');
+const galleryRoutes = require('./routes/galleryRoutes');
 
 const app = express();
 const server = http.createServer(app);
@@ -72,6 +73,7 @@ app.use('/api/league', leagueRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/podcasts', podcastRoutes);
 app.use('/api/sponsors', sponsorRoutes);
+app.use('/api/gallery', galleryRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

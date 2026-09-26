@@ -17,12 +17,22 @@ const storage = new CloudinaryStorage({
   }
 });
 
-const upload = multer({
-  storage,
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
+const galleryStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'skouted_league/gallery',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'webp', 'avif'],
+    transformation: [{ width: 2400, height: 1600, crop: 'limit', quality: 'auto' }]
+  }
+});
+
+const galleryUpload = multer({
+  storage: galleryStorage,
+  limits: { fileSize: 15 * 1024 * 1024 } // 15MB max per image
 });
 
 module.exports = {
   cloudinary,
-  upload
+  upload,
+  galleryUpload
 };

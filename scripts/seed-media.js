@@ -237,6 +237,185 @@ async function seedMedia() {
       console.log(`[Media Seeder] Sponsors already exist (${sponsorCount} found).`);
     }
 
+    // Seed Media / Gallery Items if collection is empty
+    const MediaItem = require('../models/MediaItem');
+    const mediaCount = await MediaItem.countDocuments();
+    if (mediaCount === 0) {
+      console.log('[Media Seeder] Seeding gallery & media assets...');
+      const galleryItems = [
+        {
+          title: 'Thunderous 90th Minute Equalizer',
+          caption: 'Dramatic stoppage-time volley sends the away supporters into raptures in Leg 1 thriller.',
+          category: 'Matchday Action',
+          url: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Matchday 1: Alamu FC vs Telu Stars',
+          tags: ['Volley', 'Goal', 'Stoppage Time', 'Thriller'],
+          views: 342,
+          likes: 58,
+          isPublished: true
+        },
+        {
+          title: 'Midfield Maestro Free Kick Under Floodlights',
+          caption: 'Curled masterfully over the four-man wall into the top corner from 25 yards out.',
+          category: 'Matchday Action',
+          url: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Matchday 1: Winners FC vs Alamu FC',
+          tags: ['Free Kick', 'Set Piece', 'Top Bin'],
+          views: 489,
+          likes: 82,
+          isPublished: true
+        },
+        {
+          title: 'Aerial Duel at the Far Post',
+          caption: 'Center-backs battle for aerial supremacy in a fiercely contested corner kick battle.',
+          category: 'Matchday Action',
+          url: 'https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Group A Clash',
+          tags: ['Defense', 'Heading', 'Corner Kick'],
+          views: 215,
+          likes: 34,
+          isPublished: true
+        },
+        {
+          title: 'Crucial Penalty Save in Stoppage Time',
+          caption: 'Full-stretch fingertip save preserves the clean sheet in the 94th minute.',
+          category: 'Matchday Action',
+          url: 'https://images.unsplash.com/photo-1431324155629-1a6deb1dec8d?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Matchday 2 Opener',
+          tags: ['Goalkeeper', 'Penalty', 'Clean Sheet', 'Heroics'],
+          views: 512,
+          likes: 97,
+          isPublished: true
+        },
+        {
+          title: 'Full-Stretch Slide Tackle in the Final Third',
+          caption: 'Precision defensive intervention breaking down an incisive counter-attack.',
+          category: 'Matchday Action',
+          url: 'https://images.unsplash.com/photo-1560272564-c83b66b1ad12?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Group B Fixture',
+          tags: ['Tackle', 'Discipline', 'Clean Play'],
+          views: 198,
+          likes: 29,
+          isPublished: true
+        },
+        {
+          title: 'Opening Ceremony Parade & Team Presentation',
+          caption: 'All 12 registered youth clubs assembled on pitch for official tournament inauguration.',
+          category: 'Teams',
+          url: 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'SYL Opening Ceremony',
+          tags: ['Opening Ceremony', '12 Clubs', 'Inauguration'],
+          views: 620,
+          likes: 114,
+          isPublished: true
+        },
+        {
+          title: 'Pre-Match Focus: Starting XI Lineup Inspection',
+          caption: 'Captains leading their squads out through the grand tunnel under official match ball protocol.',
+          category: 'Teams',
+          url: 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Matchday 1 Kickoff',
+          tags: ['Lineup', 'Starting XI', 'Focus'],
+          views: 310,
+          likes: 45,
+          isPublished: true
+        },
+        {
+          title: 'Victory Celebrations With the Travelling Fans',
+          caption: 'Emotional post-match scenes as the young lions celebrate three hard-fought points.',
+          category: 'Teams',
+          url: 'https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Post-Match',
+          tags: ['Celebration', 'Three Points', 'Fans'],
+          views: 425,
+          likes: 78,
+          isPublished: true
+        },
+        {
+          title: 'Locker Room Strategy & Tactical Chalk Talk',
+          caption: 'Head coach laying out second-half transition patterns and high-press triggers.',
+          category: 'Behind The Scenes',
+          url: 'https://images.unsplash.com/photo-1511886929837-354d827aae26?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Halftime Dressing Room',
+          tags: ['Tactics', 'Locker Room', 'Coach', 'Strategy'],
+          views: 540,
+          likes: 91,
+          isPublished: true
+        },
+        {
+          title: 'Pre-Kickoff Hydration & Physio Warmup Drills',
+          caption: 'Dynamic stretching, agility ladders, and reaction ball exercises in pre-game prep.',
+          category: 'Behind The Scenes',
+          url: 'https://images.unsplash.com/photo-1543326727-cf6c39e8f84c?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Training Ground',
+          tags: ['Warmup', 'Physio', 'Fitness', 'Readiness'],
+          views: 260,
+          likes: 38,
+          isPublished: true
+        },
+        {
+          title: 'Tunnel Walkout: The Final Seconds Before Battle',
+          caption: 'Intense eye contact and silent focus in the tunnel before stepping onto the pitch.',
+          category: 'Behind The Scenes',
+          url: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'The Tunnel',
+          tags: ['Tunnel', 'Focus', 'Walkout'],
+          views: 380,
+          likes: 67,
+          isPublished: true
+        },
+        {
+          title: 'Man of the Match Official Trophy Presentation',
+          caption: 'Star winger awarded the SYL Player of the Match crystal award after a 2-goal display.',
+          category: 'Awards & Scouts',
+          url: 'https://images.unsplash.com/photo-1569517282132-25d22f4573e6?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Matchday 1 Awards',
+          tags: ['MOTM', 'Trophy', 'Award', 'Standout'],
+          views: 740,
+          likes: 135,
+          isPublished: true
+        },
+        {
+          title: 'International Scouting Delegation Analyzing Talents',
+          caption: 'Accredited European and top-flight club scouts taking notes from the VIP executive box.',
+          category: 'Awards & Scouts',
+          url: 'https://images.unsplash.com/photo-1516726817505-f5ed825624d8?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Scouting Forum',
+          tags: ['Scouting', 'Talent ID', 'Future Stars', 'Europe'],
+          views: 690,
+          likes: 122,
+          isPublished: true
+        },
+        {
+          title: 'Championship Arena Under the Floodlights',
+          caption: 'Atmospheric panoramic view of the official Skouted Youth League stadium on game night.',
+          category: 'Hero Banner',
+          url: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1800',
+          matchTag: 'Stadium Showcase',
+          tags: ['Stadium', 'Floodlights', 'Arena', 'Hero'],
+          views: 890,
+          likes: 160,
+          isPublished: true
+        },
+        {
+          title: 'Youth Academy Grassroots Development Clinic',
+          caption: 'Technical director guiding under-17 academy prospects through positional rondos.',
+          category: 'About Highlight',
+          url: 'https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&q=80&w=1600',
+          matchTag: 'Academy Clinic',
+          tags: ['Academy', 'Grassroots', 'Development', 'Future'],
+          views: 430,
+          likes: 72,
+          isPublished: true
+        }
+      ];
+
+      await MediaItem.insertMany(galleryItems);
+      console.log(`[Media Seeder] Inserted ${galleryItems.length} gallery & media items.`);
+    } else {
+      console.log(`[Media Seeder] Media items already exist (${mediaCount} found).`);
+    }
+
     console.log('[Media Seeder] Media database seeding complete!');
   } catch (err) {
     console.error('[Media Seeder Error]:', err);
