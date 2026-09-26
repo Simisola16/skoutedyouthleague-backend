@@ -51,6 +51,27 @@ const leagueSettingsSchema = new mongoose.Schema({
     type: String,
     default: 'Youth talent competing in the Skouted Youth League Championship'
   },
+  // Dedicated Tournament Honors & Awards Showcase
+  leagueCupImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=800&q=80'
+  },
+  goldenBootImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1511886929837-354d827aae26?auto=format&fit=crop&w=800&q=80'
+  },
+  goldenGloveImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80'
+  },
+  mvpImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&w=800&q=80'
+  },
+  scoutShowcaseImageUrl: {
+    type: String,
+    default: 'https://images.unsplash.com/photo-1516726817505-f5ed825624d8?auto=format&fit=crop&w=800&q=80'
+  },
   lastUpdatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

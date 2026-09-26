@@ -19,7 +19,12 @@ router.get('/settings', async (req, res) => {
         transferWindowOpenedAt: settings.transferWindowOpenedAt,
         isRegistrationOpen: settings.checkRegistrationEligibility().allowed,
         aboutImageUrl: settings.aboutImageUrl || 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
-        aboutImageCaption: settings.aboutImageCaption || 'Youth talent competing in the Skouted Youth League Championship'
+        aboutImageCaption: settings.aboutImageCaption || 'Youth talent competing in the Skouted Youth League Championship',
+        leagueCupImageUrl: settings.leagueCupImageUrl || 'https://images.unsplash.com/photo-1579952363873-27f3bade9f55?auto=format&fit=crop&w=800&q=80',
+        goldenBootImageUrl: settings.goldenBootImageUrl || 'https://images.unsplash.com/photo-1511886929837-354d827aae26?auto=format&fit=crop&w=800&q=80',
+        goldenGloveImageUrl: settings.goldenGloveImageUrl || 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=800&q=80',
+        mvpImageUrl: settings.mvpImageUrl || 'https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&w=800&q=80',
+        scoutShowcaseImageUrl: settings.scoutShowcaseImageUrl || 'https://images.unsplash.com/photo-1516726817505-f5ed825624d8?auto=format&fit=crop&w=800&q=80'
       }
     });
   } catch (err) {
