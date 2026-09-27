@@ -130,7 +130,7 @@ app.get('/api/content/about', async (req, res) => {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    app: 'Skouted League Production API',
+    app: 'Skouted Youth League Production API',
     time: new Date().toISOString(),
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected'
   });
@@ -151,9 +151,9 @@ app.get('*', (req, res) => {
       res.status(200).send(`
         <!DOCTYPE html>
         <html>
-        <head><title>Skouted League API</title></head>
+        <head><title>Skouted Youth League API</title></head>
         <body style="background:#0D0F14;color:#FFF;font-family:sans-serif;text-align:center;padding:50px;">
-          <h1>⚡ Skouted League Realtime API Server</h1>
+          <h1>⚡ Skouted Youth League Realtime API Server</h1>
           <p>Server running on port 5055. Client build is compiling.</p>
         </body>
         </html>
@@ -176,7 +176,7 @@ mongoose.connect(MONGODB_URI)
     console.log('=================================================');
     console.log('✅ Connected to MongoDB Atlas: skoutedLeague');
     server.listen(PORT, () => {
-      console.log(`⚽ SKOUTED LEAGUE SERVER ACTIVE ON PORT ${PORT}`);
+      console.log(`⚽ SKOUTED YOUTH LEAGUE SERVER ACTIVE ON PORT ${PORT}`);
       console.log(`🔗 Web Application: http://localhost:${PORT}/`);
       console.log(`🔗 Health Status:   http://localhost:${PORT}/api/health`);
       console.log('=================================================');
