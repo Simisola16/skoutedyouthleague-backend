@@ -1,5 +1,6 @@
 const { Client } = require('ssh2');
 const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 
 const conn = new Client();
@@ -79,7 +80,7 @@ async function main() {
       `CLOUDINARY_CLOUD_NAME=${CLOUDINARY_CLOUD_NAME}`,
       `CLOUDINARY_API_KEY=${CLOUDINARY_API_KEY}`,
       `CLOUDINARY_API_SECRET=${CLOUDINARY_API_SECRET}`,
-      `EMAIL_FROM="Skouted Youth League <tournaments@thevillagecoders.com>"`,
+      `EMAIL_FROM="Skouted Youth League <tournaments@skoutedyouthleague.com>"`,
       `SERVER_BASE_URL=https://api.skoutedyouthleague.com`
     ].join('\n');
 

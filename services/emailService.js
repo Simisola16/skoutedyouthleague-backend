@@ -5,7 +5,7 @@ const SystemCounter = require('../models/SystemCounter');
 // Dual Resend API Key Configuration (Free tier 100 emails/day per key)
 const primaryKey = process.env.RESEND_PRIMARY_KEY || process.env.RESEND_API_KEY || '';
 const backupKey = process.env.RESEND_BACKUP_KEY || '';
-const emailFrom = process.env.EMAIL_FROM || 'Skouted Youth League <tournaments@thevillagecoders.com>';
+const emailFrom = process.env.EMAIL_FROM || 'Skouted Youth League <tournaments@skoutedyouthleague.com>';
 
 const primaryResend = primaryKey ? new Resend(primaryKey) : null;
 const backupResend = backupKey ? new Resend(backupKey) : null;

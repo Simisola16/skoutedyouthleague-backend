@@ -59,7 +59,7 @@ CLOUDINARY_URL=${process.env.CLOUDINARY_URL || 'REPLACE_WITH_CLOUDINARY_URL'}
 CLOUDINARY_CLOUD_NAME=${process.env.CLOUDINARY_CLOUD_NAME || 'REPLACE_WITH_CLOUD_NAME'}
 CLOUDINARY_API_KEY=${process.env.CLOUDINARY_API_KEY || 'REPLACE_WITH_CLOUDINARY_API_KEY'}
 CLOUDINARY_API_SECRET=${process.env.CLOUDINARY_API_SECRET || 'REPLACE_WITH_CLOUDINARY_API_SECRET'}
-EMAIL_FROM="Skouted Youth League <tournaments@thevillagecoders.com>"
+EMAIL_FROM="Skouted Youth League <tournaments@skoutedyouthleague.com>"
 EOF`;
     await run(envUpdateCmd);
 
