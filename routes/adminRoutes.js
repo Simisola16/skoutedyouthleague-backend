@@ -718,7 +718,8 @@ router.patch('/settings', async (req, res) => {
       seasonKickoffDate,
       broadcastNotice,
       aboutImageUrl,
-      aboutImageCaption
+      aboutImageCaption,
+      socialLinks
     } = req.body;
 
     const settings = await LeagueSettings.getSettings();
@@ -762,6 +763,14 @@ router.patch('/settings', async (req, res) => {
 
     if (aboutImageCaption !== undefined) {
       settings.aboutImageCaption = aboutImageCaption.trim();
+    }
+
+    if (socialLinks !== undefined && typeof socialLinks === 'object') {
+      settings.socialLinks = {
+        facebook: socialLinks.facebook !== undefined ? String(socialLinks.facebook).trim() : settings.socialLinks?.facebook,
+        instagram: socialLinks.instagram !== undefined ? String(socialLinks.instagram).trim() : settings.socialLinks?.instagram,
+        youtube: socialLinks.youtube !== undefined ? String(socialLinks.youtube).trim() : settings.socialLinks?.youtube
+      };
     }
 
     settings.lastUpdatedBy = req.user?.id || null;

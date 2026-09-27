@@ -456,6 +456,12 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
         ${content}
       </div>
       <div class="footer">
+        <div style="margin: 0 0 14px 0; text-align: center;">
+          <p style="margin: 0 0 8px 0; font-size: 11px; font-weight: 700; color: #94A3B8; text-transform: uppercase; letter-spacing: 1px;">Follow Skouted Youth League</p>
+          <a href="https://www.facebook.com/share/1BcNGQkKGm/?mibextid=wwXIfr" target="_blank" style="display: inline-block; margin: 0 5px; padding: 6px 12px; background-color: #1E2330; border-radius: 6px; color: #1877F2; text-decoration: none; font-size: 11px; font-weight: bold;">Facebook</a>
+          <a href="https://www.instagram.com/skouted_youth_league" target="_blank" style="display: inline-block; margin: 0 5px; padding: 6px 12px; background-color: #1E2330; border-radius: 6px; color: #E1306C; text-decoration: none; font-size: 11px; font-weight: bold;">Instagram</a>
+          <a href="https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1" target="_blank" style="display: inline-block; margin: 0 5px; padding: 6px 12px; background-color: #1E2330; border-radius: 6px; color: #FF0000; text-decoration: none; font-size: 11px; font-weight: bold;">YouTube</a>
+        </div>
         <p style="margin:0 0 6px 0;">Official Skouted League Tournament Notification System</p>
         <p style="margin:0;">&copy; ${new Date().getFullYear()} Skouted League. All rights reserved.</p>
       </div>

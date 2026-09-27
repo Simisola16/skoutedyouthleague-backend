@@ -72,6 +72,28 @@ const leagueSettingsSchema = new mongoose.Schema({
     type: String,
     default: 'https://images.unsplash.com/photo-1516726817505-f5ed825624d8?auto=format&fit=crop&w=800&q=80'
   },
+  socialLinks: {
+    facebook: {
+      type: String,
+      default: 'https://www.facebook.com/share/1BcNGQkKGm/?mibextid=wwXIfr'
+    },
+    instagram: {
+      type: String,
+      default: 'https://www.instagram.com/skouted_youth_league'
+    },
+    youtube: {
+      type: String,
+      default: 'https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1'
+    },
+    youtubeChannelId: {
+      type: String,
+      default: 'UCy_dA9AmAWwGcDhh1PQtARA'
+    },
+    youtubeLiveEmbedUrl: {
+      type: String,
+      default: 'https://www.youtube.com/embed/live_stream?channel=UCy_dA9AmAWwGcDhh1PQtARA'
+    }
+  },
   lastUpdatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -94,14 +116,37 @@ leagueSettingsSchema.statics.getSettings = async function() {
       registrationLocked: false,
       seasonPhase: 'pre_season',
       aboutImageUrl: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80',
-      aboutImageCaption: 'Youth talent competing in the Skouted Youth League Championship'
+      aboutImageCaption: 'Youth talent competing in the Skouted Youth League Championship',
+      socialLinks: {
+        facebook: 'https://www.facebook.com/share/1BcNGQkKGm/?mibextid=wwXIfr',
+        instagram: 'https://www.instagram.com/skouted_youth_league',
+        youtube: 'https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1',
+        youtubeChannelId: 'UCy_dA9AmAWwGcDhh1PQtARA',
+        youtubeLiveEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UCy_dA9AmAWwGcDhh1PQtARA'
+      }
     });
-  } else if (!settings.aboutImageUrl) {
-    settings.aboutImageUrl = 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80';
-    if (!settings.aboutImageCaption) {
-      settings.aboutImageCaption = 'Youth talent competing in the Skouted Youth League Championship';
+  } else {
+    let modified = false;
+    if (!settings.aboutImageUrl) {
+      settings.aboutImageUrl = 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=1200&q=80';
+      if (!settings.aboutImageCaption) {
+        settings.aboutImageCaption = 'Youth talent competing in the Skouted Youth League Championship';
+      }
+      modified = true;
     }
-    await settings.save();
+    if (!settings.socialLinks || !settings.socialLinks.youtube || settings.socialLinks.youtube.includes('@Skouted') || !settings.socialLinks.youtube.includes('UCy_dA9AmAWwGcDhh1PQtARA')) {
+      settings.socialLinks = {
+        facebook: settings.socialLinks?.facebook || 'https://www.facebook.com/share/1BcNGQkKGm/?mibextid=wwXIfr',
+        instagram: 'https://www.instagram.com/skouted_youth_league',
+        youtube: 'https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1',
+        youtubeChannelId: 'UCy_dA9AmAWwGcDhh1PQtARA',
+        youtubeLiveEmbedUrl: 'https://www.youtube.com/embed/live_stream?channel=UCy_dA9AmAWwGcDhh1PQtARA'
+      };
+      modified = true;
+    }
+    if (modified) {
+      await settings.save();
+    }
   }
   return settings;
 };
