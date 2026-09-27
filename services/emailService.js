@@ -5,7 +5,7 @@ const SystemCounter = require('../models/SystemCounter');
 // Dual Resend API Key Configuration (Free tier 100 emails/day per key)
 const primaryKey = process.env.RESEND_PRIMARY_KEY || process.env.RESEND_API_KEY || '';
 const backupKey = process.env.RESEND_BACKUP_KEY || '';
-const emailFrom = process.env.EMAIL_FROM || 'Skouted League <tournaments@thevillagecoders.com>';
+const emailFrom = process.env.EMAIL_FROM || 'Skouted Youth League <tournaments@thevillagecoders.com>';
 
 const primaryResend = primaryKey ? new Resend(primaryKey) : null;
 const backupResend = backupKey ? new Resend(backupKey) : null;
@@ -416,7 +416,7 @@ async function dispatchMail(mailOptions) {
 }
 
 // Athletic Dark Theme Base Template Helper
-function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE' }) {
+function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED YOUTH LEAGUE' }) {
   return `
 <!DOCTYPE html>
 <html lang="en">
@@ -449,7 +449,7 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
           <img src="https://api.skoutedyouthleague.com/logo.png" alt="Skouted Youth League" style="width: 68px; height: auto; max-height: 78px; margin: 0 auto; display: block; filter: drop-shadow(0 4px 10px rgba(0, 230, 118, 0.2));" />
         </div>
         <div class="logo-badge">${badgeText}</div>
-        <h1 style="margin:0; font-size:22px; font-weight:900; color:#FFFFFF; letter-spacing:-0.5px;">SKOUTED LEAGUE</h1>
+        <h1 style="margin:0; font-size:22px; font-weight:900; color:#FFFFFF; letter-spacing:-0.5px;">SKOUTED YOUTH LEAGUE</h1>
         <p style="margin:4px 0 0 0; font-size:12px; color:#94A3B8;">Premier Youth Football Championship & Social Scouting</p>
       </div>
       <div class="content">
@@ -462,8 +462,8 @@ function wrapEmailHtml({ title, preheader, content, badgeText = 'SKOUTED LEAGUE'
           <a href="https://www.instagram.com/skouted_youth_league" target="_blank" style="display: inline-block; margin: 0 5px; padding: 6px 12px; background-color: #1E2330; border-radius: 6px; color: #E1306C; text-decoration: none; font-size: 11px; font-weight: bold;">Instagram</a>
           <a href="https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1" target="_blank" style="display: inline-block; margin: 0 5px; padding: 6px 12px; background-color: #1E2330; border-radius: 6px; color: #FF0000; text-decoration: none; font-size: 11px; font-weight: bold;">YouTube</a>
         </div>
-        <p style="margin:0 0 6px 0;">Official Skouted League Tournament Notification System</p>
-        <p style="margin:0;">&copy; ${new Date().getFullYear()} Skouted League. All rights reserved.</p>
+        <p style="margin:0 0 6px 0;">Official Skouted Youth League Tournament Notification System</p>
+        <p style="margin:0;">&copy; ${new Date().getFullYear()} Skouted Youth League. All rights reserved.</p>
       </div>
     </div>
   </div>
@@ -477,19 +477,19 @@ class EmailService {
   static async sendOtpEmail({ email, name, otp }) {
     // Always print OTP in console for reliable access
     console.log(`\n======================================================`);
-    console.log(`🔐 [SKOUTED LEAGUE OTP DISPATCH]`);
+    console.log(`🔐 [SKOUTED YOUTH LEAGUE OTP DISPATCH]`);
     console.log(`👤 Recipient: ${name || 'Team Manager'} <${email}>`);
     console.log(`🔑 OTP CODE:  >>> ${otp} <<<`);
     console.log(`⏱ Valid for: 10 minutes (Master Backup: 123456)`);
     console.log(`======================================================\n`);
 
     try {
-      const subject = `🔐 Your Skouted League Verification Code: ${otp}`;
+      const subject = `🔐 Your Skouted Youth League Verification Code: ${otp}`;
       const content = `
         <h2 style="color:#FFFFFF; font-size:18px; margin-top:0;">Verify Your Manager Account</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
           Hello <strong style="color:#FFFFFF;">${name || 'Team Manager'}</strong>,<br>
-          Welcome to Skouted League. Please use the 6-digit confirmation code below to verify your club account and unlock match-day lineup submissions.
+          Welcome to Skouted Youth League. Please use the 6-digit confirmation code below to verify your club account and unlock match-day lineup submissions.
         </p>
         <div style="text-align:center; margin:24px 0;">
           <div style="display:inline-block; background-color:#1E2433; border:2px dashed #00E676; border-radius:12px; padding:16px 36px;">
@@ -512,7 +512,7 @@ class EmailService {
         to: email,
         subject,
         html,
-        text: `Your Skouted League verification code is: ${otp}`
+        text: `Your Skouted Youth League verification code is: ${otp}`
       });
 
       return { ...res, otp };
@@ -532,7 +532,7 @@ class EmailService {
       const content = `
         <h2 style="color:#FFFFFF; font-size:18px; margin-top:0;">Official Match Fixture Scheduled</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
-          Attention Managers: An official tournament match has been scheduled on the Skouted League platform.
+          Attention Managers: An official tournament match has been scheduled on the Skouted Youth League platform.
         </p>
         <div class="highlight-box">
           <div style="font-size:16px; font-weight:900; color:#FFFFFF; margin-bottom:12px; text-align:center;">
@@ -647,7 +647,7 @@ class EmailService {
           <div class="score-badge">
             ${homeScore} - ${awayScore}
           </div>
-          <div style="color:#64748B; font-size:12px;">Live in Skouted League Tournament</div>
+          <div style="color:#64748B; font-size:12px;">Live in Skouted Youth League Tournament</div>
         </div>
       `;
 
@@ -689,7 +689,7 @@ class EmailService {
         <h2 style="color:#FFFFFF; font-size:18px; margin-top:0;">Account Password Updated</h2>
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
           Hello <strong style="color:#FFFFFF;">${name || 'Team Manager'}</strong>,<br>
-          This is an official security confirmation that the password for your Skouted League club manager account 
+          This is an official security confirmation that the password for your Skouted Youth League club manager account 
           ${teamName ? `(<strong>${teamName}</strong>)` : ''} was successfully updated.
         </p>
         <div style="background-color:#1F2430; border-radius:12px; padding:16px; margin:20px 0; border-left:4px solid #00E676;">
@@ -705,7 +705,7 @@ class EmailService {
 
       const html = wrapEmailHtml({
         title: 'Password Security Notice',
-        preheader: 'Your Skouted League account password was successfully updated.',
+        preheader: 'Your Skouted Youth League account password was successfully updated.',
         content,
         badgeText: 'SECURITY NOTICE'
       });
@@ -776,7 +776,7 @@ class EmailService {
     try {
       if (!managerEmail) return { success: false, error: 'No manager email provided' };
 
-      const subject = `⚠️ Notice: ${teamName} Registration Status Update - Skouted League`;
+      const subject = `⚠️ Notice: ${teamName} Registration Status Update - Skouted Youth League`;
       const reasonDisplay = rejectionReason || 'Your team registration could not be approved due to incomplete or unverified club accreditation details.';
 
       const content = `

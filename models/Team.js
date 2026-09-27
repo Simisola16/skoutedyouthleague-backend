@@ -24,7 +24,7 @@ const teamSchema = new mongoose.Schema({
   },
   group: {
     type: String,
-    default: 'Group A'
+    default: ''
   },
   verificationStatus: {
     type: String,

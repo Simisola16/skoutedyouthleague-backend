@@ -37,7 +37,7 @@ Built on the conviction that **talent is everywhere, but opportunity isn’t**, 
   {
     title: 'Matchday 1 Tactical Breakdown: Fast Transitions and Technical Mastery',
     slug: 'matchday-1-tactical-breakdown-fast-transitions',
-    excerpt: 'An in-depth review of opening weekend action, standout defensive blocks, and clinical counter-attacking performances across Group A and Group B.',
+    excerpt: 'An in-depth review of opening weekend action, standout defensive blocks, and clinical counter-attacking performances across the Championship.',
     content: `### Opening Weekend Showcases High-Intensity Pressing
 
 The first round of fixtures exceeded expectations with intense tempo, rapid vertical progression, and exceptional individual skill on display.
@@ -270,7 +270,7 @@ async function seedMedia() {
           caption: 'Center-backs battle for aerial supremacy in a fiercely contested corner kick battle.',
           category: 'Matchday Action',
           url: 'https://images.unsplash.com/photo-1517927033932-b3d18e61fb3a?auto=format&fit=crop&q=80&w=1600',
-          matchTag: 'Group A Clash',
+          matchTag: 'Championship Clash',
           tags: ['Defense', 'Heading', 'Corner Kick'],
           views: 215,
           likes: 34,
@@ -292,7 +292,7 @@ async function seedMedia() {
           caption: 'Precision defensive intervention breaking down an incisive counter-attack.',
           category: 'Matchday Action',
           url: 'https://images.unsplash.com/photo-1560272564-c83b66b1ad12?auto=format&fit=crop&q=80&w=1600',
-          matchTag: 'Group B Fixture',
+          matchTag: 'League Fixture',
           tags: ['Tackle', 'Discipline', 'Clean Play'],
           views: 198,
           likes: 29,
