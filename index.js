@@ -26,6 +26,8 @@ const podcastRoutes = require('./routes/podcastRoutes');
 const sponsorRoutes = require('./routes/sponsorRoutes');
 const galleryRoutes = require('./routes/galleryRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
+const socialRoutes = require('./routes/socialRoutes');
+const SocialSyncService = require('./services/socialSyncService');
 
 const app = express();
 const server = http.createServer(app);
@@ -78,6 +80,7 @@ app.use('/api/gallery', galleryRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/uploads', mediaRoutes);
 app.use('/uploads', mediaRoutes);
+app.use('/api/social', socialRoutes);
 
 // Static assets (Logo, brand graphics, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
@@ -177,8 +180,9 @@ mongoose.connect(MONGODB_URI)
       console.log(`🔗 Web Application: http://localhost:${PORT}/`);
       console.log(`🔗 Health Status:   http://localhost:${PORT}/api/health`);
       console.log('=================================================');
-      // Start background cron job
+      // Start background cron jobs
       startScheduler();
+      SocialSyncService.initScheduler();
     });
   })
   .catch((err) => {
