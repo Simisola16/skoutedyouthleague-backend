@@ -51,12 +51,13 @@ async function main() {
 
     if (pKey) {
       await run(`sed -i "s/^RESEND_PRIMARY_KEY=.*/RESEND_PRIMARY_KEY=${pKey}/" /var/www/backend/.env`);
+      await run(`sed -i "s/^RESEND_API_KEY=.*/RESEND_API_KEY=${pKey}/" /var/www/backend/.env`);
     }
     if (bKey) {
       await run(`sed -i "s/^RESEND_BACKUP_KEY=.*/RESEND_BACKUP_KEY=${bKey}/" /var/www/backend/.env`);
     }
-    await run(`grep -q "^SOCIAL_SYNC_SECRET=" /var/www/backend/.env && sed -i "s/^SOCIAL_SYNC_SECRET=.*/SOCIAL_SYNC_SECRET=${socialSecret}/" /var/www/backend/.env || echo "SOCIAL_SYNC_SECRET=${socialSecret}" >> /var/www/backend/.env`);
-    await run(`grep -q "^ADMIN_NOTIFICATION_EMAIL=" /var/www/backend/.env || echo "ADMIN_NOTIFICATION_EMAIL=maroophadek@gmail.com" >> /var/www/backend/.env`);
+    const adminEmailConfig = process.env.ADMIN_NOTIFICATION_EMAIL || 'maroophadek@gmail.com,olamilekanmuhayad@yahoo.com';
+    await run(`grep -q "^ADMIN_NOTIFICATION_EMAIL=" /var/www/backend/.env && sed -i "s/^ADMIN_NOTIFICATION_EMAIL=.*/ADMIN_NOTIFICATION_EMAIL=${adminEmailConfig}/" /var/www/backend/.env || echo "ADMIN_NOTIFICATION_EMAIL=${adminEmailConfig}" >> /var/www/backend/.env`);
 
     // 4. Clean and restart PM2 under administrator
     await run('echo "Skouted@123" | sudo -S pm2 delete all 2>/dev/null || true');

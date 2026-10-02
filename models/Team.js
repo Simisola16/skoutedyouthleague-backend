@@ -12,7 +12,8 @@ const teamSchema = new mongoose.Schema({
     required: true,
     uppercase: true,
     trim: true,
-    maxlength: 4
+    minlength: 2,
+    maxlength: 10
   },
   logo: {
     type: String,

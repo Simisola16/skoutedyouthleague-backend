@@ -25,7 +25,43 @@ router.post('/register', async (req, res) => {
 
     const existingUser = await User.findOne({ email: email.toLowerCase().trim() });
     if (existingUser) {
-      return res.status(400).json({ success: false, error: 'An account with this email already exists' });
+      // Check if user already owns an existing registered team
+      const existingTeam = await Team.findOne({ manager: existingUser._id });
+      if (existingTeam) {
+        return res.status(400).json({ success: false, error: 'An account with this email already exists for registered club: ' + existingTeam.name + '. Please log in.' });
+      }
+
+      // If user exists but is unverified OR has no team registered yet (e.g. previous registration attempt interrupted), allow fresh OTP
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const otp = generateOtp();
+      const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      existingUser.name = name.trim();
+      existingUser.password = hashedPassword;
+      existingUser.phone = phone || existingUser.phone || '';
+      existingUser.isVerified = false;
+      existingUser.verificationOtp = otp;
+      existingUser.otpExpiresAt = otpExpiresAt;
+      await existingUser.save();
+
+      const emailRes = await EmailService.sendOtpEmail({
+        email: existingUser.email,
+        name: existingUser.name,
+        otp
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Account updated. A new 6-digit verification code has been dispatched to your email.',
+        data: {
+          userId: existingUser._id,
+          email: existingUser.email,
+          name: existingUser.name,
+          role: existingUser.role,
+          isVerified: false,
+          emailSent: emailRes.success
+        }
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);

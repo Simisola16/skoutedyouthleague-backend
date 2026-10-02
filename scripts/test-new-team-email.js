@@ -7,7 +7,9 @@ const EmailService = require('../services/emailService');
 const JWT_SECRET = process.env.JWT_SECRET || 'skouted_league_super_secret_jwt_key_2026';
 
 async function main() {
-  console.log('Sending test team registration notification to maroophadek@gmail.com...');
+  const rawAdminEmails = process.env.ADMIN_NOTIFICATION_EMAIL || 'maroophadek@gmail.com,olamilekanmuhayad@yahoo.com';
+  const adminRecipients = rawAdminEmails.split(',').map(e => e.trim()).filter(Boolean);
+  console.log(`Sending test team registration notification to ${adminRecipients.join(', ')}...`);
 
   const mockTeam = {
     _id: new mongoose.Types.ObjectId(),
@@ -27,7 +29,7 @@ async function main() {
     teamId: mockTeam._id.toString(),
     teamName: mockTeam.name,
     action: 'approve',
-    email: 'maroophadek@gmail.com'
+    email: adminRecipients[0] || 'maroophadek@gmail.com'
   };
 
   const approvalToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '60d' });
@@ -39,7 +41,7 @@ async function main() {
   const adminPortalUrl = 'https://skoutedyouthleague.vercel.app/admin';
 
   const res = await EmailService.sendNewTeamRegistrationAlert({
-    recipientEmail: 'maroophadek@gmail.com',
+    recipientEmail: adminRecipients,
     team: mockTeam,
     approveUrl,
     rejectUrl,

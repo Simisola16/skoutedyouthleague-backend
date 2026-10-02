@@ -427,26 +427,29 @@ router.get('/:id', async (req, res) => {
 // 3. Register / Create a Team (with optional crest upload)
 router.post('/', upload.single('crest'), async (req, res) => {
   try {
-    const { name, shortCode, homeGround, managerName, managerEmail, managerPhone, userId } = req.body;
+    const cleanName = String(name || '').trim();
+    const cleanShortCode = String(shortCode || '').trim().toUpperCase().slice(0, 10);
 
-    if (!name || !shortCode) {
+    if (!cleanName || !cleanShortCode) {
       return res.status(400).json({ success: false, error: 'Team name and short code are required' });
     }
 
     const existingTeam = await Team.findOne({
-      $or: [{ name: name.trim() }, { shortCode: shortCode.trim().toUpperCase() }]
+      $or: [{ name: cleanName }, { shortCode: cleanShortCode }]
     });
 
     if (existingTeam) {
-      return res.status(400).json({ success: false, error: 'A team with this name or short code already exists' });
+      return res.status(400).json({ success: false, error: `A team with name "${existingTeam.name}" or short code "${existingTeam.shortCode}" already exists` });
     }
 
     const logo = req.file ? req.file.path : (req.body.logo || '');
 
     const team = new Team({
-      name: name.trim(),
-      shortCode: shortCode.trim().toUpperCase(),
+      name: cleanName,
+      shortCode: cleanShortCode,
       homeGround: homeGround || 'Legacy Pitch Arena A',
+      homeKitColor: req.body.homeKitColor || '#00E676',
+      awayKitColor: req.body.awayKitColor || '#3B82F6',
       manager: userId || null,
       managerName: managerName || '',
       managerEmail: managerEmail || '',
@@ -466,14 +469,19 @@ router.post('/', upload.single('crest'), async (req, res) => {
       await User.findByIdAndUpdate(userId, { team: team._id });
     }
 
-    // Dispatch automated admin notification to maroophadek@gmail.com with one-click direct approval
+    // Dispatch automated admin notification to configured admins with one-click direct approval
     try {
-      const adminRecipient = process.env.ADMIN_NOTIFICATION_EMAIL || 'maroophadek@gmail.com';
+      const rawAdminEmails = process.env.ADMIN_NOTIFICATION_EMAIL || 'maroophadek@gmail.com,olamilekanmuhayad@yahoo.com';
+      const adminRecipients = rawAdminEmails
+        .split(',')
+        .map(email => email.trim())
+        .filter(Boolean);
+
       const tokenPayload = {
         teamId: team._id.toString(),
         teamName: team.name,
         action: 'approve',
-        email: adminRecipient
+        email: adminRecipients[0] || 'maroophadek@gmail.com'
       };
       const approvalToken = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: '60d' });
       const rejectionToken = jwt.sign({ ...tokenPayload, action: 'reject' }, JWT_SECRET, { expiresIn: '60d' });
@@ -483,16 +491,33 @@ router.post('/', upload.single('crest'), async (req, res) => {
       const rejectUrl = `${serverBaseUrl}/api/teams/action/reject?token=${encodeURIComponent(rejectionToken)}`;
       const adminPortalUrl = 'https://skoutedyouthleague.vercel.app/admin';
 
+      // 1. Dispatch alert to tournament administrators
       EmailService.sendNewTeamRegistrationAlert({
-        recipientEmail: adminRecipient,
+        recipientEmail: adminRecipients,
         team,
         approveUrl,
         rejectUrl,
         adminPortalUrl
+      }).then(res => {
+        console.log(`[Team Registration Alert]: Dispatched to admins ${adminRecipients.join(', ')} (Status: ${res?.success ? 'OK' : 'Fail'})`);
       }).catch(alertErr => {
         console.error('[EmailService Notice - Team Registration Alert Failed]:', alertErr.message);
       });
-      console.log(`[Team Registration]: Dispatched accreditation alert for "${team.name}" to ${adminRecipient}`);
+
+      // 2. Dispatch confirmation email to club manager
+      if (team.managerEmail) {
+        EmailService.sendTeamRegistrationPendingEmail({
+          managerEmail: team.managerEmail,
+          managerName: team.managerName,
+          team
+        }).then(res => {
+          console.log(`[Team Registration Confirmation]: Dispatched to manager ${team.managerEmail} (Status: ${res?.success ? 'OK' : 'Fail'})`);
+        }).catch(mgrErr => {
+          console.error('[EmailService Notice - Manager Confirmation Failed]:', mgrErr.message);
+        });
+      }
+
+      console.log(`[Team Registration]: Dispatched accreditation alerts for "${team.name}" to admins (${adminRecipients.join(', ')}) and manager (${team.managerEmail})`);
     } catch (dispatchErr) {
       console.error('[Team Registration Notification Error]:', dispatchErr.message);
     }

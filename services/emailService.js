@@ -33,20 +33,20 @@ if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
 }
 
 /**
- * Identify HTTP 429 Rate Limit responses or Daily Quota errors from Resend
+ * Identify HTTP 429 Rate Limit responses, 403 Domain Restriction, or Quota errors from Resend
  */
 function isRateLimitOrQuotaError(error) {
   if (!error) return false;
   if (typeof error === 'object') {
     const code = error.statusCode || error.status || error.code;
-    if (code === 429 || code === '429') return true;
+    if (code === 429 || code === '429' || code === 403 || code === '403' || code === 401 || code === '401') return true;
     const msg = String(error.message || error.name || error.code || JSON.stringify(error)).toLowerCase();
-    if (/429|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded/i.test(msg)) {
+    if (/429|403|401|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded|not\s*authorized|unauthorized/i.test(msg)) {
       return true;
     }
   }
   if (typeof error === 'string') {
-    if (/429|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded/i.test(error)) {
+    if (/429|403|401|rate\s*limit|quota|daily\s*limit|too\s*many\s*requests|restricted|limit\s*exceeded|not\s*authorized|unauthorized/i.test(error)) {
       return true;
     }
   }
@@ -878,16 +878,114 @@ class EmailService {
     }
   }
 
+  // 8.5 Send Club Manager Confirmation of Team Registration (Pending Accreditation)
+  static async sendTeamRegistrationPendingEmail({ managerEmail, managerName, team }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const teamName = team.name || 'Your Team';
+      const shortCode = team.shortCode || 'N/A';
+      const homeGround = team.homeGround || 'Official League Ground';
+      const registeredAt = team.createdAt ? new Date(team.createdAt).toUTCString() : new Date().toUTCString();
+      const crestUrl = team.logo && (team.logo.startsWith('http') || team.logo.startsWith('/')) ? team.logo : null;
+
+      const subject = `⚽ Club Registration Received: ${teamName} (${shortCode}) | Skouted Youth League`;
+
+      const content = `
+        <div style="background: linear-gradient(135deg, rgba(0, 230, 118, 0.12) 0%, rgba(56, 189, 248, 0.06) 100%); border: 1px solid rgba(0, 230, 118, 0.3); border-radius: 16px; padding: 20px; margin-bottom: 24px;">
+          <div style="margin-bottom: 8px;">
+            <span style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #00E676; text-transform: uppercase; background: rgba(0, 230, 118, 0.15); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(0, 230, 118, 0.3); display: inline-block;">
+              ⏳ REGISTRATION UNDER REVIEW
+            </span>
+            <span style="font-size: 11px; color: #94A3B8; font-family: monospace; float: right; margin-top: 4px;">
+              ${registeredAt}
+            </span>
+          </div>
+          <div style="clear: both;"></div>
+          <h2 style="color: #FFFFFF; font-size: 22px; font-weight: 900; margin: 12px 0 6px 0; letter-spacing: -0.5px;">
+            Welcome, ${managerName || 'Coach'}!
+          </h2>
+          <p style="color: #CBD5E1; font-size: 13px; margin: 0; line-height: 1.5;">
+            Thank you for registering <strong>${teamName}</strong> for the <strong>Skouted Youth League Championship Season 2026/2027</strong>.
+          </p>
+        </div>
+
+        <h3 style="color: #FFFFFF; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; margin: 24px 0 10px 0; border-bottom: 1px solid #232733; padding-bottom: 6px;">
+          🏟️ Club Summary
+        </h3>
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 22px; font-size: 13px;">
+          ${crestUrl ? `
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B; width: 35%;">Club Crest</td>
+            <td style="padding: 10px 0; text-align: right;">
+              <img src="${crestUrl}" alt="${teamName}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 8px; background: #0D0F14; padding: 4px; border: 1px solid #283042; display: inline-block;" />
+            </td>
+          </tr>` : ''}
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B; width: 35%;">Club Name</td>
+            <td style="padding: 10px 0; color: #FFFFFF; font-weight: 700; text-align: right;">${teamName}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Short Code</td>
+            <td style="padding: 10px 0; color: #00E676; font-weight: 800; font-family: monospace; text-align: right;">${shortCode}</td>
+          </tr>
+          <tr style="border-bottom: 1px solid #1E2330;">
+            <td style="padding: 10px 0; color: #64748B;">Home Ground</td>
+            <td style="padding: 10px 0; color: #E2E8F0; text-align: right;">${homeGround}</td>
+          </tr>
+        </table>
+
+        <div class="highlight-box" style="border-left-color: #38BDF8; background-color: rgba(56, 189, 248, 0.08); padding: 18px; border-radius: 12px; margin: 20px 0;">
+          <div style="font-size: 12px; font-weight: 800; color: #38BDF8; text-transform: uppercase; margin-bottom: 6px;">
+            📌 Next Steps for Club Accreditation
+          </div>
+          <p style="margin: 0; font-size: 12px; color: #94A3B8; line-height: 1.6;">
+            1. <strong>Committee Review:</strong> Tournament administrators have been notified of your registration.<br>
+            2. <strong>Accreditation Notification:</strong> Once verified, you will receive an official approval email.<br>
+            3. <strong>Squad Submission:</strong> Upon accreditation, your Team Command Center will unlock full player roster additions and match-day lineup submissions.
+          </p>
+        </div>
+
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="https://skoutedyouthleague.vercel.app/team/dashboard" class="btn" style="color: #07120B !important;">
+            Access Team Command Center &rarr;
+          </a>
+        </div>
+      `;
+
+      const html = wrapEmailHtml({
+        title: `Club Registration Received: ${teamName}`,
+        preheader: `Thank you for registering ${teamName} (${shortCode}) with Skouted Youth League. Your accreditation is currently under review.`,
+        content,
+        badgeText: 'REGISTRATION CONFIRMATION'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Club Registration Received: ${teamName} (${shortCode})\nThank you for registering your club with Skouted Youth League.\nYour application is under review by tournament administration.\nAccess Command Center: https://skoutedyouthleague.vercel.app/team/dashboard`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Team Registration Pending Email]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // 9. Alert Admin of New Team Registration with One-Click Direct Approval
   static async sendNewTeamRegistrationAlert({
-    recipientEmail = 'maroophadek@gmail.com',
+    recipientEmail = process.env.ADMIN_NOTIFICATION_EMAIL || ['maroophadek@gmail.com', 'olamilekanmuhayad@yahoo.com'],
     team,
     approveUrl,
     rejectUrl,
     adminPortalUrl
   }) {
     try {
-      if (!recipientEmail) return { success: false, error: 'No recipient provided' };
+      const recipients = Array.isArray(recipientEmail)
+        ? recipientEmail.map(e => String(e).trim()).filter(Boolean)
+        : String(recipientEmail || '').split(',').map(e => e.trim()).filter(Boolean);
+
+      if (recipients.length === 0) return { success: false, error: 'No recipient provided' };
 
       const teamName = team.name || 'New Team';
       const shortCode = team.shortCode || 'N/A';
@@ -1005,7 +1103,7 @@ class EmailService {
         </div>
 
         <p style="color: #64748B; font-size: 11px; text-align: center; margin-top: 16px; line-height: 1.5;">
-          This secure automated dispatch was sent directly to <strong>${recipientEmail}</strong> for tournament administration.
+          This secure automated dispatch was sent directly to <strong>${recipients.join(', ')}</strong> for tournament administration.
         </p>
       `;
 
@@ -1017,7 +1115,7 @@ class EmailService {
       });
 
       return await dispatchMail({
-        to: recipientEmail,
+        to: recipients,
         subject,
         html,
         text: `New Team Registration: ${teamName} (${shortCode})\nManager: ${managerName} (${managerEmail}, ${managerPhone})\nApprove directly: ${approveUrl}\nAdmin portal: ${adminPortalUrl}`
