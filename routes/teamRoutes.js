@@ -424,14 +424,21 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// 3. Register / Create a Team (with optional crest upload)
+// 3. Register / Create a Team (crest upload required)
 router.post('/', upload.single('crest'), async (req, res) => {
   try {
+    const { name, shortCode, homeGround, managerName, managerEmail, managerPhone, userId } = req.body;
+
     const cleanName = String(name || '').trim();
     const cleanShortCode = String(shortCode || '').trim().toUpperCase().slice(0, 10);
 
     if (!cleanName || !cleanShortCode) {
       return res.status(400).json({ success: false, error: 'Team name and short code are required' });
+    }
+
+    const logo = req.file ? req.file.path : (req.body.logo || '');
+    if (!logo) {
+      return res.status(400).json({ success: false, error: 'Team logo / club crest is required. Please upload an official logo image.' });
     }
 
     const existingTeam = await Team.findOne({
@@ -441,8 +448,6 @@ router.post('/', upload.single('crest'), async (req, res) => {
     if (existingTeam) {
       return res.status(400).json({ success: false, error: `A team with name "${existingTeam.name}" or short code "${existingTeam.shortCode}" already exists` });
     }
-
-    const logo = req.file ? req.file.path : (req.body.logo || '');
 
     const team = new Team({
       name: cleanName,
