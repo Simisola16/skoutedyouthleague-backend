@@ -98,6 +98,15 @@ const playerSchema = new mongoose.Schema({
     redCards: { type: Number, default: 0 },
     cleanSheets: { type: Number, default: 0 },
     minutesPlayed: { type: Number, default: 0 }
+  },
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  deletedAt: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true,

@@ -88,6 +88,20 @@ const teamSchema = new mongoose.Schema({
   awayKitColor: {
     type: String,
     default: '#3B82F6'
+  },
+  isDeleted: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  deletedAt: {
+    type: Date,
+    default: null
+  },
+  deletedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
   }
 }, {
   timestamps: true,

@@ -14,8 +14,8 @@ const { requireAdmin, requireOfficialOrAdmin } = require('../middleware/authMidd
 // Helper to recalculate league standings
 async function recalculateStandings() {
   try {
-    const teams = await Team.find();
-    const fixtures = await Fixture.find({ status: 'FT' });
+    const teams = await Team.find({ isDeleted: { $ne: true } });
+    const fixtures = await Fixture.find({ status: 'FT', isDeleted: { $ne: true } });
 
     const statsMap = {};
     teams.forEach(t => {
@@ -82,7 +82,7 @@ async function recalculateStandings() {
       }
     }
 
-    const updatedStandings = await Team.find().sort({ 'stats.points': -1, 'stats.goalDifference': -1, 'stats.goalsFor': -1 });
+    const updatedStandings = await Team.find({ isDeleted: { $ne: true } }).sort({ 'stats.points': -1, 'stats.goalDifference': -1, 'stats.goalsFor': -1 });
     broadcastStandingsUpdate(updatedStandings);
 
     // Evaluate automated Mid-Season Transfer Window trigger upon Leg 1 completion
@@ -100,15 +100,15 @@ router.get('/', async (req, res) => {
     if (featured === 'true') {
       const maxLimit = parseInt(limit || '3', 10);
 
-      const live = await Fixture.find({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'LIVE'] } })
+      const live = await Fixture.find({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'LIVE'] }, isDeleted: { $ne: true } })
         .populate('homeTeam awayTeam')
         .sort({ date: 1, time: 1 });
 
-      const upcoming = await Fixture.find({ status: 'UPCOMING' })
+      const upcoming = await Fixture.find({ status: 'UPCOMING', isDeleted: { $ne: true } })
         .populate('homeTeam awayTeam')
         .sort({ date: 1, time: 1 });
 
-      const finished = await Fixture.find({ status: 'FT' })
+      const finished = await Fixture.find({ status: 'FT', isDeleted: { $ne: true } })
         .populate('homeTeam awayTeam')
         .sort({ date: -1, time: -1 });
 
@@ -116,7 +116,7 @@ router.get('/', async (req, res) => {
       return res.json({ success: true, data: prioritized });
     }
 
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
     if (status) filter.status = status;
     if (stage) filter.stage = stage;
 
@@ -457,14 +457,42 @@ router.patch('/:id/stats', requireOfficialOrAdmin, async (req, res) => {
   }
 });
 
-// 8. Delete Fixture (Admin)
+// 8. Delete / Trash Fixture (Admin)
 router.delete('/:id', requireAdmin, async (req, res) => {
   try {
-    const fixture = await Fixture.findByIdAndDelete(req.params.id);
+    const { permanent } = req.query;
+    if (permanent === 'true') {
+      const fixture = await Fixture.findByIdAndDelete(req.params.id);
+      if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+      await MatchEvent.deleteMany({ fixture: req.params.id });
+      await recalculateStandings();
+      return res.json({ success: true, message: 'Fixture permanently deleted' });
+    }
+
+    const fixture = await Fixture.findByIdAndUpdate(
+      req.params.id,
+      { isDeleted: true, deletedAt: new Date() },
+      { new: true }
+    );
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
-    await MatchEvent.deleteMany({ fixture: req.params.id });
     await recalculateStandings();
-    res.json({ success: true, message: 'Fixture deleted successfully' });
+    res.json({ success: true, message: 'Fixture moved to trash', data: fixture });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 8b. Restore Fixture (Admin)
+router.post('/:id/restore', requireAdmin, async (req, res) => {
+  try {
+    const fixture = await Fixture.findByIdAndUpdate(
+      req.params.id,
+      { isDeleted: false, deletedAt: null },
+      { new: true }
+    );
+    if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+    await recalculateStandings();
+    res.json({ success: true, message: 'Fixture restored successfully', data: fixture });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

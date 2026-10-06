@@ -20,7 +20,7 @@ router.use(requireAdmin);
 router.get('/teams', async (req, res) => {
   try {
     const { search, group, status, verificationStatus } = req.query;
-    const filter = {};
+    const filter = { isDeleted: { $ne: true } };
 
     if (group && group !== 'All') {
       filter.group = group;
@@ -695,6 +695,282 @@ router.patch('/teams/:id/status', async (req, res) => {
   }
 });
 
+// ============================================================================
+// TRASH & RECOVERY SYSTEM
+// ============================================================================
+
+// GET /api/admin/trash - Retrieve all soft-deleted items (teams, fixtures, players)
+router.get('/trash', async (req, res) => {
+  try {
+    const trashedTeams = await Team.find({ isDeleted: true }).sort({ deletedAt: -1 });
+    const trashedFixtures = await Fixture.find({ isDeleted: true })
+      .populate('homeTeam awayTeam')
+      .sort({ deletedAt: -1 });
+    const trashedPlayers = await Player.find({ isDeleted: true })
+      .populate('team', 'name shortCode logo')
+      .sort({ deletedAt: -1 });
+
+    const enrichedTeams = await Promise.all(trashedTeams.map(async (t) => {
+      const squadCount = await Player.countDocuments({ team: t._id });
+      let managerUser = null;
+      if (t.manager) {
+        managerUser = await User.findById(t.manager).select('name email phone');
+      } else if (t.managerEmail) {
+        managerUser = await User.findOne({ email: t.managerEmail.toLowerCase().trim() }).select('name email phone');
+      }
+      return {
+        ...t.toObject(),
+        squadCount,
+        managerUser
+      };
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        teams: enrichedTeams,
+        fixtures: trashedFixtures,
+        players: trashedPlayers,
+        counts: {
+          teams: enrichedTeams.length,
+          fixtures: trashedFixtures.length,
+          players: trashedPlayers.length,
+          total: enrichedTeams.length + trashedFixtures.length + trashedPlayers.length
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Get Trash Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/admin/teams/:id - Move team to Trash (Soft delete)
+router.delete('/teams/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.isDeleted = true;
+    team.deletedAt = new Date();
+    team.deletedBy = req.user?.id || null;
+    await team.save();
+
+    // Also soft-delete team squad players
+    await Player.updateMany({ team: team._id }, { isDeleted: true, deletedAt: new Date() });
+
+    // Also soft-delete upcoming fixtures for this team
+    await Fixture.updateMany(
+      { $or: [{ homeTeam: team._id }, { awayTeam: team._id }], status: 'UPCOMING' },
+      { isDeleted: true, deletedAt: new Date() }
+    );
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" has been moved to Trash. You can restore it or delete it permanently from the Trash page.`,
+      data: team
+    });
+  } catch (err) {
+    console.error('[Admin Trash Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/teams/:id/restore - Restore team from Trash
+router.post('/teams/:id/restore', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.isDeleted = false;
+    team.deletedAt = null;
+    team.deletedBy = null;
+    await team.save();
+
+    // Restore squad players
+    await Player.updateMany({ team: team._id }, { isDeleted: false, deletedAt: null });
+
+    // Restore associated fixtures
+    await Fixture.updateMany(
+      { $or: [{ homeTeam: team._id }, { awayTeam: team._id }] },
+      { isDeleted: false, deletedAt: null }
+    );
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" has been successfully restored!`,
+      data: team
+    });
+  } catch (err) {
+    console.error('[Admin Restore Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/admin/teams/:id/permanent - Permanently delete team and associated records
+router.delete('/teams/:id/permanent', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    // 1. Delete associated squad players
+    const delPlayers = await Player.deleteMany({ team: team._id });
+
+    // 2. Delete associated fixtures and match events
+    const MatchEvent = require('../models/MatchEvent');
+    const fixtures = await Fixture.find({ $or: [{ homeTeam: team._id }, { awayTeam: team._id }] });
+    const fixtureIds = fixtures.map(f => f._id);
+    await MatchEvent.deleteMany({ fixture: { $in: fixtureIds } });
+    const delFixtures = await Fixture.deleteMany({ _id: { $in: fixtureIds } });
+
+    // 3. Delete or unlink manager account if it belongs exclusively to this team
+    if (team.manager) {
+      const otherTeams = await Team.find({ manager: team.manager, _id: { $ne: team._id } });
+      if (otherTeams.length === 0) {
+        await User.findByIdAndDelete(team.manager);
+      }
+    } else if (team.managerEmail) {
+      const mgr = await User.findOne({ email: team.managerEmail.toLowerCase().trim() });
+      if (mgr) {
+        const otherTeams = await Team.find({ manager: mgr._id, _id: { $ne: team._id } });
+        if (otherTeams.length === 0) {
+          await User.findByIdAndDelete(mgr._id);
+        }
+      }
+    }
+
+    // 4. Delete team document
+    await Team.findByIdAndDelete(id);
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" and all associated data permanently deleted.`,
+      details: {
+        deletedPlayersCount: delPlayers.deletedCount,
+        deletedFixturesCount: delFixtures.deletedCount
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Permanent Delete Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/admin/players/:id - Move player to Trash (Soft delete)
+router.delete('/players/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const player = await Player.findById(id);
+    if (!player) return res.status(404).json({ success: false, error: 'Player record not found' });
+
+    player.isDeleted = true;
+    player.deletedAt = new Date();
+    await player.save();
+
+    res.json({
+      success: true,
+      message: `Player "${player.firstName} ${player.lastName}" moved to Trash.`,
+      data: player
+    });
+  } catch (err) {
+    console.error('[Admin Trash Player Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/players/:id/restore - Restore player from Trash
+router.post('/players/:id/restore', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const player = await Player.findById(id);
+    if (!player) return res.status(404).json({ success: false, error: 'Player record not found' });
+
+    player.isDeleted = false;
+    player.deletedAt = null;
+    await player.save();
+
+    res.json({
+      success: true,
+      message: `Player "${player.firstName} ${player.lastName}" has been successfully restored!`,
+      data: player
+    });
+  } catch (err) {
+    console.error('[Admin Restore Player Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/admin/players/:id/permanent - Permanently delete player
+router.delete('/players/:id/permanent', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const player = await Player.findByIdAndDelete(id);
+    if (!player) return res.status(404).json({ success: false, error: 'Player record not found' });
+
+    res.json({
+      success: true,
+      message: `Player "${player.firstName} ${player.lastName}" permanently deleted.`
+    });
+  } catch (err) {
+    console.error('[Admin Permanent Delete Player Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/trash/empty - Permanently empty all trash
+router.post('/trash/empty', async (req, res) => {
+  try {
+    const trashedTeams = await Team.find({ isDeleted: true });
+    const teamIds = trashedTeams.map(t => t._id);
+
+    // Delete players of trashed teams + any other trashed players
+    const delPlayers = await Player.deleteMany({ $or: [{ team: { $in: teamIds } }, { isDeleted: true }] });
+
+    // Delete fixtures of trashed teams + any other trashed fixtures
+    const MatchEvent = require('../models/MatchEvent');
+    const trashedFixtures = await Fixture.find({
+      $or: [
+        { isDeleted: true },
+        { homeTeam: { $in: teamIds } },
+        { awayTeam: { $in: teamIds } }
+      ]
+    });
+    const fixtureIds = trashedFixtures.map(f => f._id);
+    await MatchEvent.deleteMany({ fixture: { $in: fixtureIds } });
+    const delFixtures = await Fixture.deleteMany({ _id: { $in: fixtureIds } });
+
+    // Clean up managers of trashed teams
+    for (const team of trashedTeams) {
+      if (team.manager) {
+        const otherTeams = await Team.find({ manager: team.manager, _id: { $nin: teamIds } });
+        if (otherTeams.length === 0) {
+          await User.findByIdAndDelete(team.manager);
+        }
+      }
+    }
+
+    // Delete trashed teams
+    const delTeams = await Team.deleteMany({ isDeleted: true });
+
+    res.json({
+      success: true,
+      message: `Trash emptied successfully. Removed ${delTeams.deletedCount} teams, ${delFixtures.deletedCount} fixtures, ${delPlayers.deletedCount} players.`
+    });
+  } catch (err) {
+    console.error('[Admin Empty Trash Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 6. GET /api/admin/settings - Retrieve Current Competition & Transfer Window Settings
 router.get('/settings', async (req, res) => {
   try {
@@ -873,16 +1149,22 @@ router.get('/stats/overview', async (req, res) => {
       totalPlayers,
       totalFixtures,
       activeFixtures,
-      totalMedia
+      totalMedia,
+      trashedTeamsCount,
+      trashedFixturesCount
     ] = await Promise.all([
-      Team.countDocuments(),
-      Team.countDocuments({ verificationStatus: 'pending' }),
-      Team.countDocuments({ verificationStatus: 'approved' }),
-      Player.countDocuments(),
-      Fixture.countDocuments(),
-      Fixture.countDocuments({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'UPCOMING'] } }),
-      MediaItem.countDocuments()
+      Team.countDocuments({ isDeleted: { $ne: true } }),
+      Team.countDocuments({ verificationStatus: 'pending', isDeleted: { $ne: true } }),
+      Team.countDocuments({ verificationStatus: 'approved', isDeleted: { $ne: true } }),
+      Player.countDocuments({ isDeleted: { $ne: true } }),
+      Fixture.countDocuments({ isDeleted: { $ne: true } }),
+      Fixture.countDocuments({ status: { $in: ['1ST HALF', '2ND HALF', 'HT', 'PENS', 'UPCOMING'] }, isDeleted: { $ne: true } }),
+      MediaItem.countDocuments(),
+      Team.countDocuments({ isDeleted: true }),
+      Fixture.countDocuments({ isDeleted: true })
     ]);
+
+    const trashCount = trashedTeamsCount + trashedFixturesCount;
 
     res.json({
       success: true,
@@ -893,7 +1175,10 @@ router.get('/stats/overview', async (req, res) => {
         totalPlayers,
         totalFixtures,
         activeFixtures,
-        totalMedia
+        totalMedia,
+        trashCount,
+        trashedTeamsCount,
+        trashedFixturesCount
       }
     });
   } catch (err) {

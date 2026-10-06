@@ -28,31 +28,45 @@ class MongoGridFSStorage {
         }
       });
 
-      file.stream.pipe(uploadStream)
-        .on('error', (err) => {
-          console.error('[GridFS Upload Stream Error]:', err);
-          cb(err);
-        })
-        .on('finish', () => {
-          const fileId = uploadStream.id;
-          const protocol = req.headers['x-forwarded-proto'] || (req.connection && req.connection.encrypted ? 'https' : 'http') || 'http';
-          const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:5055';
-          const baseUrl = process.env.SERVER_BASE_URL || `${protocol}://${host}`;
-          const fileUrl = `${baseUrl}/api/media/file/${fileId}`;
+      let callbackCalled = false;
+      const safeCb = (err, result) => {
+        if (callbackCalled) return;
+        callbackCalled = true;
+        cb(err, result);
+      };
 
-          cb(null, {
-            id: fileId,
-            fileId: fileId,
-            filename: fileId.toString(),
-            originalname: file.originalname,
-            mimetype: file.mimetype,
-            path: fileUrl,
-            secure_url: fileUrl,
-            url: fileUrl,
-            publicId: fileId.toString(),
-            storage: 'gridfs'
-          });
+      file.stream.on('error', (err) => {
+        console.error('[GridFS Incoming Stream Error]:', err);
+        safeCb(err);
+      });
+
+      uploadStream.on('error', (err) => {
+        console.error('[GridFS Upload Stream Error]:', err);
+        safeCb(err);
+      });
+
+      uploadStream.on('finish', () => {
+        const fileId = uploadStream.id;
+        const protocol = req.headers['x-forwarded-proto'] || (req.socket && req.socket.encrypted ? 'https' : 'http') || 'http';
+        const host = req.headers['x-forwarded-host'] || req.get('host') || 'localhost:5055';
+        const baseUrl = process.env.SERVER_BASE_URL || `${protocol}://${host}`;
+        const fileUrl = `${baseUrl}/api/media/file/${fileId}`;
+
+        safeCb(null, {
+          id: fileId,
+          fileId: fileId,
+          filename: fileId.toString(),
+          originalname: file.originalname,
+          mimetype: file.mimetype,
+          path: fileUrl,
+          secure_url: fileUrl,
+          url: fileUrl,
+          publicId: fileId.toString(),
+          storage: 'gridfs'
         });
+      });
+
+      file.stream.pipe(uploadStream);
     } catch (err) {
       console.error('[GridFS Storage Exception]:', err);
       cb(err);

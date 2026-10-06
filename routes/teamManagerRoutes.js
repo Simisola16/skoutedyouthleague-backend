@@ -306,7 +306,7 @@ const handleAddPlayer = async (req, res) => {
       weightKg: weightKg ? Number(weightKg) : null,
       nationality: nationality ? nationality.trim() : 'Nigeria',
       age: Number(age) || 17,
-      dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
+      dateOfBirth: (dateOfBirth && !isNaN(new Date(dateOfBirth).getTime())) ? new Date(dateOfBirth) : null,
       roles: parsedRoles,
       role: role || (parsedRoles.includes('Captain') ? 'Captain' : parsedRoles.includes('Vice Captain') ? 'Vice Captain' : parsedRoles[0]),
       photo: photoUrl,
@@ -384,7 +384,10 @@ router.put('/roster/:playerId', upload.single('photo'), async (req, res) => {
     if (weightKg !== undefined) player.weightKg = weightKg ? Number(weightKg) : null;
     if (nationality) player.nationality = nationality.trim();
     if (age) player.age = Number(age);
-    if (dateOfBirth) player.dateOfBirth = new Date(dateOfBirth);
+    if (dateOfBirth) {
+      const parsedDate = new Date(dateOfBirth);
+      if (!isNaN(parsedDate.getTime())) player.dateOfBirth = parsedDate;
+    }
 
     if (roles) {
       if (Array.isArray(roles)) player.roles = roles;

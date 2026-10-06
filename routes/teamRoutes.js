@@ -150,7 +150,7 @@ function renderActionStatusPage({
 // 1. Get all teams
 router.get('/', async (req, res) => {
   try {
-    const teams = await Team.find().populate('squad').sort({ 'stats.points': -1, 'stats.goalDifference': -1 });
+    const teams = await Team.find({ isDeleted: { $ne: true } }).populate('squad').sort({ 'stats.points': -1, 'stats.goalDifference': -1 });
     res.json({ success: true, data: teams });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -601,7 +601,7 @@ router.post('/:id/players', upload.single('photo'), async (req, res) => {
       photo,
       preferredFoot: preferredFoot || 'Right',
       age: Number(age) || 17,
-      dateOfBirth: dateOfBirth || ''
+      dateOfBirth: (dateOfBirth && !isNaN(new Date(dateOfBirth).getTime())) ? new Date(dateOfBirth) : null
     });
 
     await player.save();
