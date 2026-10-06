@@ -11,6 +11,10 @@ const LeagueService = require('../services/leagueService');
 const { broadcastLeagueSettingsUpdate } = require('../services/socketService');
 const { requireAdmin } = require('../middleware/authMiddleware');
 const { upload, galleryUpload, cloudinary, deleteFromGridFS } = require('../services/cloudinary');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'skouted_league_super_secret_jwt_key_2026';
 
 // All routes in this router require role: "admin"
 router.use(requireAdmin);
@@ -741,6 +745,95 @@ router.get('/trash', async (req, res) => {
     });
   } catch (err) {
     console.error('[Admin Get Trash Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/teams/:id/login-as - Impersonate Club Manager (Login as Team)
+router.post('/teams/:id/login-as', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    // Look for existing manager user linked to this team
+    let managerUser = null;
+    if (team.manager) {
+      managerUser = await User.findById(team.manager);
+    }
+    if (!managerUser) {
+      managerUser = await User.findOne({ team: team._id, role: 'manager' });
+    }
+    if (!managerUser && team.contactEmail) {
+      managerUser = await User.findOne({ email: team.contactEmail.toLowerCase().trim() });
+    }
+
+    // Auto-create or link active manager account if missing
+    if (!managerUser) {
+      const generatedEmail = team.contactEmail && team.contactEmail.includes('@')
+        ? team.contactEmail.toLowerCase().trim()
+        : `manager.${(team.shortCode || 'club').toLowerCase().replace(/[^a-z0-9]/g, '')}@skoutedyouthleague.com`;
+
+      const fallbackPassword = await bcrypt.hash('Team@Manager2026!', 10);
+      managerUser = await User.create({
+        name: team.managerName || `${team.name} Manager`,
+        email: generatedEmail,
+        password: fallbackPassword,
+        role: 'manager',
+        team: team._id,
+        phone: team.managerPhone || '',
+        isVerified: true
+      });
+
+      team.manager = managerUser._id;
+      if (!team.managerName) team.managerName = managerUser.name;
+      if (!team.contactEmail) team.contactEmail = managerUser.email;
+      await team.save();
+    } else {
+      // Ensure manager is verified and linked to team
+      if (!managerUser.isVerified || !managerUser.team) {
+        managerUser.isVerified = true;
+        if (!managerUser.team) managerUser.team = team._id;
+        await managerUser.save();
+      }
+    }
+
+    // Sign a fresh token with manager role and admin impersonator metadata
+    const token = jwt.sign(
+      {
+        id: managerUser._id,
+        role: managerUser.role,
+        impersonatedBy: req.user?._id || req.user?.id || 'admin'
+      },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      message: `Successfully authenticated as ${team.name} manager`,
+      data: {
+        token,
+        user: {
+          _id: managerUser._id,
+          name: managerUser.name,
+          email: managerUser.email,
+          role: managerUser.role,
+          team: {
+            _id: team._id,
+            name: team.name,
+            shortCode: team.shortCode,
+            logo: team.logo
+          },
+          isVerified: true,
+          isImpersonated: true
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Login As Team Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
