@@ -818,12 +818,11 @@ class EmailService {
   }
 
   // 7B. Team Locked Notification
-  static async sendTeamLockEmail({ managerEmail, managerName, teamName, reason }) {
+  static async sendTeamLockEmail({ managerEmail, managerName, teamName }) {
     try {
       if (!managerEmail) return { success: false, error: 'No manager email provided' };
 
       const subject = `🔒 Notice: ${teamName} Team Access Locked - Skouted Youth League`;
-      const reasonDisplay = reason || 'Locked by tournament administration pending compliance or administrative review.';
 
       const content = `
         <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.05) 100%); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 16px; padding: 22px; margin-bottom: 24px; text-align: center;">
@@ -832,7 +831,7 @@ class EmailService {
             ACCOUNT ACCESS RESTRICTED
           </span>
           <h2 style="color: #FFFFFF; font-size: 22px; font-weight: 900; margin: 0 0 8px 0; letter-spacing: -0.5px;">
-            ${teamName} is Currently Locked
+            ${teamName} Has Been Locked
           </h2>
           <p style="color: #CBD5E1; font-size: 13px; margin: 0; line-height: 1.5;">
             Tournament administration has placed a lock on your team management portal.
@@ -841,17 +840,8 @@ class EmailService {
 
         <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
           Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
-          This is an official tournament notification to inform you that operational permissions for <strong style="color:#FFFFFF;">${teamName}</strong> have been suspended by the League Administration.
+          This is an official tournament notification to inform you that <strong style="color:#FFFFFF;">${teamName}</strong> has been locked by Tournament Administration.
         </p>
-
-        <div class="highlight-box" style="border-left-color: #EF4444; background-color: rgba(239, 68, 68, 0.08); padding: 18px; border-radius: 12px; margin: 20px 0;">
-          <div style="font-size: 11px; font-weight: 800; color: #EF4444; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">
-            Reason for Lock
-          </div>
-          <p style="margin: 0; font-size: 14px; color: #FCA5A5; font-weight: 600; line-height: 1.5;">
-            ${reasonDisplay}
-          </p>
-        </div>
 
         <div style="background-color: #161922; border: 1px solid #232733; border-radius: 12px; padding: 18px; margin: 20px 0;">
           <h3 style="color: #FFFFFF; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px 0;">
@@ -870,7 +860,7 @@ class EmailService {
             Need Assistance or Looking to Unlock?
           </div>
           <p style="margin: 0; font-size: 12px; color: #94A3B8; line-height: 1.5;">
-            If you have questions regarding this decision or have completed the required compliance steps, please contact Tournament Administration or reply directly to this notification.
+            If you have questions regarding this notice or require assistance, please contact Tournament Administration or reply directly to this notification.
           </p>
         </div>
 
@@ -896,7 +886,7 @@ class EmailService {
         to: managerEmail,
         subject,
         html,
-        text: `Notice: ${teamName} has been locked by tournament administration.\nReason: ${reasonDisplay}\nWhile locked, squad edits and matchday lineup submissions are suspended. Please contact tournament administration if you have questions.`
+        text: `Notice: ${teamName} has been locked by tournament administration.\nWhile locked, squad edits and matchday lineup submissions are suspended. Please contact tournament administration if you have questions.`
       });
     } catch (error) {
       console.error('[EmailService Error - Team Lock Email]:', error.message);

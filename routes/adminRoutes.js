@@ -606,8 +606,7 @@ router.post('/teams/:id/lock', async (req, res) => {
         emailResult = await EmailService.sendTeamLockEmail({
           managerEmail,
           managerName,
-          teamName: team.name,
-          reason: team.lockedReason
+          teamName: team.name
         });
         console.log(`📧 [Admin Lock]: Email dispatched to ${managerEmail}:`, emailResult.success ? 'SUCCESS' : emailResult.error);
       } else {
