@@ -588,16 +588,46 @@ router.post('/teams/:id/lock', async (req, res) => {
 
     console.log(`🔒 [Admin Action]: Team "${team.name}" (${team.shortCode}) has been LOCKED. Reason: ${team.lockedReason}`);
 
+    // Query for manager email & dispatch notification email via Resend
+    let emailResult = { success: false };
+    try {
+      const userQueries = [];
+      if (team.manager) userQueries.push({ _id: team.manager });
+      userQueries.push({ team: team._id });
+      if (team.managerEmail) {
+        userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+      }
+
+      const managerUser = userQueries.length > 0 ? await User.findOne({ $or: userQueries }) : null;
+      const managerEmail = team.managerEmail || managerUser?.email;
+      const managerName = team.managerName || managerUser?.name || 'Team Manager';
+
+      if (managerEmail) {
+        emailResult = await EmailService.sendTeamLockEmail({
+          managerEmail,
+          managerName,
+          teamName: team.name,
+          reason: team.lockedReason
+        });
+        console.log(`📧 [Admin Lock]: Email dispatched to ${managerEmail}:`, emailResult.success ? 'SUCCESS' : emailResult.error);
+      } else {
+        console.warn(`[Admin Lock Notice]: No manager email found for team "${team.name}" (ID: ${team._id})`);
+      }
+    } catch (mailErr) {
+      console.error('[Admin Lock Email Error]:', mailErr.message);
+    }
+
     res.json({
       success: true,
-      message: `Team "${team.name}" has been locked. All roster changes and matchday actions are suspended.`,
+      message: `Team "${team.name}" has been locked. The manager has been notified via email.`,
       data: {
         team: {
           ...team.toObject(),
           isLocked: true,
           lockedAt: team.lockedAt,
           lockedReason: team.lockedReason
-        }
+        },
+        emailSent: Boolean(emailResult?.success)
       }
     });
   } catch (err) {
@@ -635,6 +665,34 @@ router.post('/teams/:id/unlock', async (req, res) => {
 
     console.log(`🔓 [Admin Action]: Team "${team.name}" (${team.shortCode}) has been UNLOCKED.`);
 
+    // Query for manager email & dispatch notification email via Resend
+    let emailResult = { success: false };
+    try {
+      const userQueries = [];
+      if (team.manager) userQueries.push({ _id: team.manager });
+      userQueries.push({ team: team._id });
+      if (team.managerEmail) {
+        userQueries.push({ email: team.managerEmail.toLowerCase().trim() });
+      }
+
+      const managerUser = userQueries.length > 0 ? await User.findOne({ $or: userQueries }) : null;
+      const managerEmail = team.managerEmail || managerUser?.email;
+      const managerName = team.managerName || managerUser?.name || 'Team Manager';
+
+      if (managerEmail) {
+        emailResult = await EmailService.sendTeamUnlockEmail({
+          managerEmail,
+          managerName,
+          teamName: team.name
+        });
+        console.log(`📧 [Admin Unlock]: Email dispatched to ${managerEmail}:`, emailResult.success ? 'SUCCESS' : emailResult.error);
+      } else {
+        console.warn(`[Admin Unlock Notice]: No manager email found for team "${team.name}" (ID: ${team._id})`);
+      }
+    } catch (mailErr) {
+      console.error('[Admin Unlock Email Error]:', mailErr.message);
+    }
+
     res.json({
       success: true,
       message: `Team "${team.name}" has been unlocked. Full manager permissions restored.`,
@@ -644,7 +702,8 @@ router.post('/teams/:id/unlock', async (req, res) => {
           isLocked: false,
           lockedAt: null,
           lockedReason: ''
-        }
+        },
+        emailSent: Boolean(emailResult?.success)
       }
     });
   } catch (err) {

@@ -817,6 +817,151 @@ class EmailService {
     }
   }
 
+  // 7B. Team Locked Notification
+  static async sendTeamLockEmail({ managerEmail, managerName, teamName, reason }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const subject = `🔒 Notice: ${teamName} Team Access Locked - Skouted Youth League`;
+      const reasonDisplay = reason || 'Locked by tournament administration pending compliance or administrative review.';
+
+      const content = `
+        <div style="background: linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.05) 100%); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 16px; padding: 22px; margin-bottom: 24px; text-align: center;">
+          <div style="font-size: 36px; margin-bottom: 8px;">🔒</div>
+          <span style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #EF4444; text-transform: uppercase; background: rgba(239, 68, 68, 0.15); padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(239, 68, 68, 0.3); display: inline-block; margin-bottom: 12px;">
+            ACCOUNT ACCESS RESTRICTED
+          </span>
+          <h2 style="color: #FFFFFF; font-size: 22px; font-weight: 900; margin: 0 0 8px 0; letter-spacing: -0.5px;">
+            ${teamName} is Currently Locked
+          </h2>
+          <p style="color: #CBD5E1; font-size: 13px; margin: 0; line-height: 1.5;">
+            Tournament administration has placed a lock on your team management portal.
+          </p>
+        </div>
+
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
+          This is an official tournament notification to inform you that operational permissions for <strong style="color:#FFFFFF;">${teamName}</strong> have been suspended by the League Administration.
+        </p>
+
+        <div class="highlight-box" style="border-left-color: #EF4444; background-color: rgba(239, 68, 68, 0.08); padding: 18px; border-radius: 12px; margin: 20px 0;">
+          <div style="font-size: 11px; font-weight: 800; color: #EF4444; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">
+            Reason for Lock
+          </div>
+          <p style="margin: 0; font-size: 14px; color: #FCA5A5; font-weight: 600; line-height: 1.5;">
+            ${reasonDisplay}
+          </p>
+        </div>
+
+        <div style="background-color: #161922; border: 1px solid #232733; border-radius: 12px; padding: 18px; margin: 20px 0;">
+          <h3 style="color: #FFFFFF; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 12px 0;">
+            ⚠️ What This Means For Your Team:
+          </h3>
+          <ul style="margin: 0; padding-left: 20px; color: #94A3B8; font-size: 13px; line-height: 1.8;">
+            <li><strong style="color: #E2E8F0;">Player Rosters:</strong> You cannot add, modify, or release players while locked.</li>
+            <li><strong style="color: #E2E8F0;">Matchday Lineups:</strong> Starting XI submissions and tactic selections are suspended.</li>
+            <li><strong style="color: #E2E8F0;">Club Details:</strong> Kit colors, crests, and identity modifications cannot be edited.</li>
+            <li><strong style="color: #E2E8F0;">Read-Only Mode:</strong> Your manager dashboard remains accessible in read-only mode to view fixtures and statistics.</li>
+          </ul>
+        </div>
+
+        <div style="background-color: #1F2430; border-radius: 12px; padding: 16px; margin: 20px 0; border-left: 4px solid #38BDF8;">
+          <div style="font-size: 12px; font-weight: 700; color: #38BDF8; margin-bottom: 4px;">
+            Need Assistance or Looking to Unlock?
+          </div>
+          <p style="margin: 0; font-size: 12px; color: #94A3B8; line-height: 1.5;">
+            If you have questions regarding this decision or have completed the required compliance steps, please contact Tournament Administration or reply directly to this notification.
+          </p>
+        </div>
+
+        <div style="text-align:center; margin:24px 0;">
+          <a href="https://skoutedyouthleague.vercel.app/team/dashboard" class="btn" style="background: linear-gradient(135deg, #374151 0%, #1F2937 100%); color:#FFFFFF !important; border: 1px solid #4B5563;">
+            View Team Dashboard (Read-Only) &rarr;
+          </a>
+        </div>
+
+        <p style="color:#64748B; font-size:12px; text-align:center;">
+          Official notification dispatched on ${new Date().toUTCString()}
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: `${teamName} Access Restricted`,
+        preheader: `Important Notice: ${teamName} has been locked by tournament administration.`,
+        content,
+        badgeText: 'ACCOUNT LOCK NOTICE'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Notice: ${teamName} has been locked by tournament administration.\nReason: ${reasonDisplay}\nWhile locked, squad edits and matchday lineup submissions are suspended. Please contact tournament administration if you have questions.`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Team Lock Email]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  // 7C. Team Unlocked Notification
+  static async sendTeamUnlockEmail({ managerEmail, managerName, teamName }) {
+    try {
+      if (!managerEmail) return { success: false, error: 'No manager email provided' };
+
+      const subject = `🔓 Access Restored: ${teamName} is Now Unlocked - Skouted Youth League`;
+
+      const content = `
+        <div style="background: linear-gradient(135deg, rgba(0, 230, 118, 0.12) 0%, rgba(56, 189, 248, 0.06) 100%); border: 1px solid rgba(0, 230, 118, 0.3); border-radius: 16px; padding: 22px; margin-bottom: 24px; text-align: center;">
+          <div style="font-size: 36px; margin-bottom: 8px;">🔓</div>
+          <span style="font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: #00E676; text-transform: uppercase; background: rgba(0, 230, 118, 0.15); padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(0, 230, 118, 0.3); display: inline-block; margin-bottom: 12px;">
+            ACCESS RESTORED
+          </span>
+          <h2 style="color: #FFFFFF; font-size: 22px; font-weight: 900; margin: 0 0 8px 0; letter-spacing: -0.5px;">
+            Full Team Access Restored
+          </h2>
+          <p style="color: #CBD5E1; font-size: 13px; margin: 0; line-height: 1.5;">
+            Your club <strong style="color: #00E676;">${teamName}</strong> has been unlocked by League Administration.
+          </p>
+        </div>
+
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Hello <strong style="color:#FFFFFF;">${managerName || 'Team Manager'}</strong>,<br>
+          We are pleased to inform you that full management privileges for <strong style="color:#FFFFFF;">${teamName}</strong> have been restored.
+        </p>
+
+        <div class="highlight-box" style="border-left-color: #00E676;">
+          <p style="margin:0; font-size:14px; color:#FFFFFF; font-weight:700;">
+            ✅ You can now update squad rosters and submit matchday lineups.
+          </p>
+        </div>
+
+        <div style="text-align:center; margin:24px 0;">
+          <a href="https://skoutedyouthleague.vercel.app/team/dashboard" class="btn" style="color:#07120B !important;">
+            Access Team Dashboard &rarr;
+          </a>
+        </div>
+      `;
+
+      const html = wrapEmailHtml({
+        title: `${teamName} Access Restored`,
+        preheader: `Good news! Full portal access for ${teamName} has been restored.`,
+        content,
+        badgeText: 'ACCESS RESTORED'
+      });
+
+      return await dispatchMail({
+        to: managerEmail,
+        subject,
+        html,
+        text: `Good news: ${teamName} has been unlocked by League Administration. Full manager permissions and lineup submissions are restored: https://skoutedyouthleague.vercel.app/team/dashboard`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Team Unlock Email]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // 8. Mid-Season Transfer Window Open Notification
   static async sendTransferWindowOpenEmail({ managerEmail, managerName, teamName, squadCount = 0, maxSquadSize = 35, closingDate = null }) {
     try {
