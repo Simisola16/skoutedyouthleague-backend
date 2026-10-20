@@ -545,6 +545,14 @@ router.post('/:id/players', upload.single('photo'), async (req, res) => {
       return res.status(404).json({ success: false, error: 'Team not found' });
     }
 
+    if (team.isLocked) {
+      return res.status(403).json({
+        success: false,
+        isLocked: true,
+        error: `Team "${team.name}" has been locked by tournament administration. Player registration and squad edits are suspended.`
+      });
+    }
+
     const isApproved = team.verificationStatus === 'approved' || (team.status === 'Verified' && team.verificationStatus !== 'rejected' && team.verificationStatus !== 'pending');
     if (!isApproved) {
       return res.status(403).json({

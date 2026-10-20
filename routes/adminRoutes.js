@@ -23,11 +23,15 @@ router.use(requireAdmin);
 // Directory of all teams with search, group filter, status filter, squad count, and lineup status
 router.get('/teams', async (req, res) => {
   try {
-    const { search, group, status, verificationStatus } = req.query;
+    const { search, group, status, verificationStatus, isLocked } = req.query;
     const filter = { isDeleted: { $ne: true } };
 
     if (group && group !== 'All') {
       filter.group = group;
+    }
+
+    if (isLocked !== undefined && isLocked !== 'All' && isLocked !== '') {
+      filter.isLocked = isLocked === 'true' || isLocked === true;
     }
 
     if (verificationStatus && verificationStatus !== 'All') {
@@ -94,6 +98,9 @@ router.get('/teams', async (req, res) => {
           verifiedAt: t.verifiedAt,
           verifiedBy: t.verifiedBy,
           rejectionReason: t.rejectionReason || '',
+          isLocked: Boolean(t.isLocked),
+          lockedAt: t.lockedAt,
+          lockedReason: t.lockedReason || '',
           squadCount,
           lineupStatus,
           pendingFixtureId,
@@ -546,6 +553,102 @@ router.post('/teams/:id/revoke', async (req, res) => {
     });
   } catch (err) {
     console.error('[Admin Revoke Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7B. POST /api/admin/teams/:id/lock - Lock Team (Suspends squad additions, edits, and match submissions)
+router.post('/teams/:id/lock', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason = 'Locked by tournament administration' } = req.body;
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.isLocked = true;
+    team.lockedAt = new Date();
+    team.lockedBy = req.user?.id || req.user?._id || null;
+    team.lockedReason = (reason && reason.trim()) ? reason.trim() : 'Locked by tournament administration';
+    await team.save();
+
+    // Broadcast realtime event
+    try {
+      const { getIO } = require('../services/socketService');
+      getIO().emit('team_lock_updated', {
+        teamId: team._id.toString(),
+        isLocked: true,
+        reason: team.lockedReason
+      });
+    } catch (sockErr) {
+      // Non-critical
+    }
+
+    console.log(`🔒 [Admin Action]: Team "${team.name}" (${team.shortCode}) has been LOCKED. Reason: ${team.lockedReason}`);
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" has been locked. All roster changes and matchday actions are suspended.`,
+      data: {
+        team: {
+          ...team.toObject(),
+          isLocked: true,
+          lockedAt: team.lockedAt,
+          lockedReason: team.lockedReason
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Lock Team Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 7C. POST /api/admin/teams/:id/unlock - Unlock Team (Restores full manager access)
+router.post('/teams/:id/unlock', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const team = await Team.findById(id);
+    if (!team) {
+      return res.status(404).json({ success: false, error: 'Team not found' });
+    }
+
+    team.isLocked = false;
+    team.lockedAt = null;
+    team.lockedBy = null;
+    team.lockedReason = '';
+    await team.save();
+
+    // Broadcast realtime event
+    try {
+      const { getIO } = require('../services/socketService');
+      getIO().emit('team_lock_updated', {
+        teamId: team._id.toString(),
+        isLocked: false
+      });
+    } catch (sockErr) {
+      // Non-critical
+    }
+
+    console.log(`🔓 [Admin Action]: Team "${team.name}" (${team.shortCode}) has been UNLOCKED.`);
+
+    res.json({
+      success: true,
+      message: `Team "${team.name}" has been unlocked. Full manager permissions restored.`,
+      data: {
+        team: {
+          ...team.toObject(),
+          isLocked: false,
+          lockedAt: null,
+          lockedReason: ''
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[Admin Unlock Team Error]:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -102,6 +102,24 @@ const teamSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     default: null
+  },
+  isLocked: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  lockedAt: {
+    type: Date,
+    default: null
+  },
+  lockedBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  lockedReason: {
+    type: String,
+    default: ''
   }
 }, {
   timestamps: true,

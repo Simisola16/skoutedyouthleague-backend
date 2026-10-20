@@ -14,6 +14,27 @@ const EmailService = require('../services/emailService');
 // All endpoints in this router require authenticated team manager clearance
 router.use(requireTeamManager);
 
+// Enforcement Middleware: Block all mutating actions if team is locked by tournament administration
+router.use(async (req, res, next) => {
+  try {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+      if (req.teamId) {
+        const team = await Team.findById(req.teamId).select('name isLocked lockedReason');
+        if (team && team.isLocked) {
+          return res.status(403).json({
+            success: false,
+            isLocked: true,
+            error: `Team "${team.name}" has been locked by tournament administration. All squad modifications, transfers, and matchday submissions are currently suspended.${team.lockedReason ? ` Reason: ${team.lockedReason}` : ''}`
+          });
+        }
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
+
 // MAX REGISTERED SQUAD LIMIT (Capped strictly at 35 players)
 const MAX_SQUAD_LIMIT = 35;
 

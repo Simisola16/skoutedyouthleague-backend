@@ -39,45 +39,50 @@ async function main() {
     // 1. Create clean webroot folder
     await run('echo "Skouted@123" | sudo -S mkdir -p /var/www/html');
 
-    // 2. Write valid port 80 nginx config
-    const conf = `server {
-    listen 80 default_server;
-    server_name api.skoutedyouthleague.com;
-    client_max_body_size 50M;
+    // 2. Write valid port 80 nginx config via base64
+    const conf = [
+      'server {',
+      '    listen 80 default_server;',
+      '    server_name api.skoutedyouthleague.com localhost 127.0.0.1 192.168.122.4 204.12.253.220;',
+      '    client_max_body_size 50M;',
+      '',
+      '    location /.well-known/acme-challenge/ {',
+      '        root /var/www/html;',
+      '    }',
+      '',
+      '    location /socket.io/ {',
+      '        proxy_pass http://127.0.0.1:5055;',
+      '        proxy_http_version 1.1;',
+      '        proxy_set_header Upgrade $http_upgrade;',
+      '        proxy_set_header Connection $connection_upgrade;',
+      '        proxy_set_header Host $host;',
+      '        proxy_cache_bypass $http_upgrade;',
+      '        proxy_set_header X-Real-IP $remote_addr;',
+      '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+      '        proxy_set_header X-Forwarded-Proto $scheme;',
+      '        proxy_read_timeout 86400s;',
+      '        proxy_send_timeout 86400s;',
+      '    }',
+      '',
+      '    location / {',
+      '        proxy_pass http://127.0.0.1:5055;',
+      '        proxy_http_version 1.1;',
+      '        proxy_set_header Upgrade $http_upgrade;',
+      '        proxy_set_header Connection $connection_upgrade;',
+      '        proxy_set_header Host $host;',
+      '        proxy_cache_bypass $http_upgrade;',
+      '        proxy_set_header X-Real-IP $remote_addr;',
+      '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+      '        proxy_set_header X-Forwarded-Proto $scheme;',
+      '        proxy_read_timeout 300s;',
+      '        proxy_connect_timeout 300s;',
+      '        proxy_send_timeout 300s;',
+      '    }',
+      '}'
+    ].join('\n') + '\n';
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location /socket.io/ {
-        proxy_pass http://127.0.0.1:5055;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection \\$connection_upgrade;
-        proxy_set_header Host \\$host;
-        proxy_cache_bypass \\$http_upgrade;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:5055;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \\$http_upgrade;
-        proxy_set_header Connection \\$connection_upgrade;
-        proxy_set_header Host \\$host;
-        proxy_cache_bypass \\$http_upgrade;
-        proxy_set_header X-Real-IP \\$remote_addr;
-        proxy_set_header X-Forwarded-For \\$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \\$scheme;
-        proxy_read_timeout 300s;
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-    }
-}`;
-
-    await run(`echo "Skouted@123" | sudo -S bash -c 'cat << "EOF" > /etc/nginx/sites-available/skouted-backend\n${conf}\nEOF'`);
+    const confB64 = Buffer.from(conf).toString('base64');
+    await run(`echo "Skouted@123" | sudo -S bash -c "echo '${confB64}' | base64 -d > /etc/nginx/sites-available/skouted-backend"`);
     await run('echo "Skouted@123" | sudo -S ln -sf /etc/nginx/sites-available/skouted-backend /etc/nginx/sites-enabled/');
     await run('echo "Skouted@123" | sudo -S rm -f /etc/nginx/sites-enabled/default');
 
