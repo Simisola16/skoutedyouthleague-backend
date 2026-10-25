@@ -573,14 +573,27 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
       timeSlots = ['10:00', '13:00', '15:30', '18:00'],
       venues = ['Lekan Salami Stadium, Adamasingba, Ibadan'],
       clearExistingUpcoming = false,
-      autoNotifyManagers = false
+      autoNotifyManagers = false,
+      weekendSplitEnabled = false,
+      saturdayMatchesCount,
+      sundayMatchesCount,
+      saturdayTimeSlots = ['10:00', '13:00', '15:30'],
+      sundayTimeSlots = ['13:00', '15:30', '18:00']
     } = req.body;
 
     const parsedLegs = (legs === '1_LEG' || Number(legs) === 1) ? 1 : 2;
-    const baseDate = startDate ? new Date(startDate) : new Date();
+    const baseDate = startDate ? new Date(`${startDate}T12:00:00`) : new Date();
     const effectiveVenues = (venues && venues.length > 0)
       ? venues
       : ['Lekan Salami Stadium, Adamasingba, Ibadan'];
+
+    // Helper to format Date safely into YYYY-MM-DD
+    const formatDateStr = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
 
     // 1. Fetch eligible teams
     const allTeams = await Team.find().sort({ name: 1 });
@@ -600,24 +613,72 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
 
     const scheduledFixtures = [];
 
+    // Helper for Saturday & Sunday dates per round
+    const getRoundDates = (roundIdx) => {
+      const roundDate = new Date(baseDate);
+      roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
+
+      let satDate = new Date(roundDate);
+      let sunDate = new Date(roundDate);
+
+      if (roundDate.getDay() === 0) {
+        // Provided base date is Sunday -> Saturday is previous day, Sunday is roundDate
+        satDate.setDate(satDate.getDate() - 1);
+      } else if (roundDate.getDay() === 6) {
+        // Base date is Saturday -> Saturday is roundDate, Sunday is next day
+        sunDate.setDate(sunDate.getDate() + 1);
+      } else {
+        // Any other day -> treat roundDate as Saturday kickoff, next day as Sunday kickoff
+        sunDate.setDate(sunDate.getDate() + 1);
+      }
+
+      return {
+        singleDateStr: formatDateStr(roundDate),
+        satDateStr: formatDateStr(satDate),
+        sunDateStr: formatDateStr(sunDate)
+      };
+    };
+
+    const effectiveSatSlots = (saturdayTimeSlots && saturdayTimeSlots.length > 0) ? saturdayTimeSlots : timeSlots;
+    const effectiveSunSlots = (sundayTimeSlots && sundayTimeSlots.length > 0) ? sundayTimeSlots : timeSlots;
+
     if (mode === 'LEAGUE_22' || mode === 'ALL_IN_ONE') {
       // 12-Team (or all-teams) League Format: 2 Legs (Home & Away) = 22 Matchdays for 12 clubs
       const rounds = buildRoundRobinSchedule(allTeams, parsedLegs);
 
       rounds.forEach((matches, roundIdx) => {
         const matchdayNum = roundIdx + 1;
-        const roundDate = new Date(baseDate);
-        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
-        const dateStr = roundDate.toISOString().split('T')[0];
+        const weekNum = matchdayNum;
+        const { singleDateStr, satDateStr, sunDateStr } = getRoundDates(roundIdx);
+
+        const totalMatchesInRound = matches.length;
+        const satCount = (weekendSplitEnabled && typeof saturdayMatchesCount === 'number' && !isNaN(saturdayMatchesCount))
+          ? Math.max(0, Math.min(totalMatchesInRound, Number(saturdayMatchesCount)))
+          : Math.ceil(totalMatchesInRound / 2);
 
         matches.forEach((m, matchIdx) => {
-          const time = timeSlots[matchIdx % timeSlots.length];
+          let dateStr;
+          let time;
+
+          if (weekendSplitEnabled) {
+            const isSat = matchIdx < satCount;
+            dateStr = isSat ? satDateStr : sunDateStr;
+            if (isSat) {
+              time = effectiveSatSlots[matchIdx % effectiveSatSlots.length];
+            } else {
+              time = effectiveSunSlots[(matchIdx - satCount) % effectiveSunSlots.length];
+            }
+          } else {
+            dateStr = singleDateStr;
+            time = timeSlots[matchIdx % timeSlots.length];
+          }
+
           const venue = effectiveVenues[matchIdx % effectiveVenues.length];
 
           scheduledFixtures.push({
             homeTeam: m.homeTeam._id,
             awayTeam: m.awayTeam._id,
-            stage: `Matchday ${matchdayNum}`,
+            stage: `Week ${weekNum}`,
             matchday: matchdayNum,
             leg: m.leg || (matchdayNum <= rounds.length / 2 ? 1 : 2),
             date: dateStr,
@@ -650,9 +711,8 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
       // Distribute rounds across matchday dates
       for (let roundIdx = 0; roundIdx < maxRounds; roundIdx++) {
         const matchdayNum = roundIdx + 1;
-        const roundDate = new Date(baseDate);
-        roundDate.setDate(roundDate.getDate() + (roundIdx * Number(daysBetweenRounds)));
-        const dateStr = roundDate.toISOString().split('T')[0];
+        const weekNum = matchdayNum;
+        const { singleDateStr, satDateStr, sunDateStr } = getRoundDates(roundIdx);
 
         let matchSlotIdx = 0;
 
@@ -660,15 +720,35 @@ router.post('/auto-generate', requireAdmin, async (req, res) => {
           const groupRounds = groupRoundsMap[grp];
           if (roundIdx < groupRounds.length) {
             const matches = groupRounds[roundIdx];
-            matches.forEach(m => {
-              const time = timeSlots[matchSlotIdx % timeSlots.length];
+            const totalMatchesInGroup = matches.length;
+            const satCount = (weekendSplitEnabled && typeof saturdayMatchesCount === 'number' && !isNaN(saturdayMatchesCount))
+              ? Math.max(0, Math.min(totalMatchesInGroup, Number(saturdayMatchesCount)))
+              : Math.ceil(totalMatchesInGroup / 2);
+
+            matches.forEach((m, mIdx) => {
+              let dateStr;
+              let time;
+
+              if (weekendSplitEnabled) {
+                const isSat = mIdx < satCount;
+                dateStr = isSat ? satDateStr : sunDateStr;
+                if (isSat) {
+                  time = effectiveSatSlots[mIdx % effectiveSatSlots.length];
+                } else {
+                  time = effectiveSunSlots[(mIdx - satCount) % effectiveSunSlots.length];
+                }
+              } else {
+                dateStr = singleDateStr;
+                time = timeSlots[matchSlotIdx % timeSlots.length];
+              }
+
               const venue = effectiveVenues[matchSlotIdx % effectiveVenues.length];
               matchSlotIdx++;
 
               scheduledFixtures.push({
                 homeTeam: m.homeTeam._id,
                 awayTeam: m.awayTeam._id,
-                stage: `${grp} - Matchday ${matchdayNum}`,
+                stage: `${grp} - Week ${weekNum}`,
                 matchday: matchdayNum,
                 leg: m.leg || (matchdayNum <= groupRounds.length / 2 ? 1 : 2),
                 date: dateStr,
