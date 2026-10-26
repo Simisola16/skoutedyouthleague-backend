@@ -282,6 +282,127 @@ router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
   }
 });
 
+// 5b. Match Controller: Reschedule, Shift, or Postpone Match
+router.patch('/:id/reschedule', requireOfficialOrAdmin, async (req, res) => {
+  try {
+    const {
+      status = 'RESCHEDULED', // 'POSTPONED' | 'RESCHEDULED' | 'UPCOMING' | 'CANCELLED' | 'ABANDONED'
+      date,
+      time,
+      venue,
+      reason = '',
+      notifyManagers = true
+    } = req.body;
+
+    const fixture = await Fixture.findById(req.params.id).populate('homeTeam awayTeam');
+    if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+
+    // Store original date & time on first shift
+    if (!fixture.originalDate) fixture.originalDate = fixture.date;
+    if (!fixture.originalTime) fixture.originalTime = fixture.time;
+
+    const prevDate = fixture.date;
+    const prevTime = fixture.time;
+
+    if (date) fixture.date = date;
+    if (time) fixture.time = time;
+    if (venue) fixture.venue = venue;
+    if (status) fixture.status = status;
+    if (reason !== undefined) fixture.postponedReason = reason;
+    fixture.rescheduledAt = new Date();
+
+    await fixture.save();
+
+    const populated = await Fixture.findById(fixture._id)
+      .populate('homeTeam awayTeam')
+      .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
+
+    // Broadcast instant update to all connected screens
+    broadcastMatchUpdate(populated);
+
+    // If status changed to/from FT, recalculate standings
+    if (fixture.status === 'FT') {
+      await recalculateStandings();
+    }
+
+    // Dispatch email to managers if requested
+    if (notifyManagers) {
+      let homeEmail = populated.homeTeam?.managerEmail;
+      let awayEmail = populated.awayTeam?.managerEmail;
+
+      if (!homeEmail && populated.homeTeam?._id) {
+        const homeMgr = await User.findOne({ team: populated.homeTeam._id });
+        if (homeMgr) homeEmail = homeMgr.email;
+      }
+      if (!awayEmail && populated.awayTeam?._id) {
+        const awayMgr = await User.findOne({ team: populated.awayTeam._id });
+        if (awayMgr) awayEmail = awayMgr.email;
+      }
+
+      if (homeEmail || awayEmail) {
+        EmailService.sendMatchRescheduledNotice({
+          homeManagerEmail: homeEmail,
+          awayManagerEmail: awayEmail,
+          homeTeamName: populated.homeTeam?.name,
+          awayTeamName: populated.awayTeam?.name,
+          status: fixture.status,
+          originalDate: fixture.originalDate || prevDate,
+          originalTime: fixture.originalTime || prevTime,
+          newDate: fixture.date,
+          newTime: fixture.time,
+          venue: fixture.venue,
+          reason: fixture.postponedReason,
+          stage: fixture.stage
+        }).catch(e => console.error('[Reschedule Email Error]:', e.message));
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Match successfully ${fixture.status.toLowerCase()}!`,
+      data: populated
+    });
+  } catch (err) {
+    console.error('[Reschedule Fixture Error]:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5c. General Fixture Edit (Admin)
+router.put('/:id', requireAdmin, async (req, res) => {
+  try {
+    const { date, time, venue, stage, matchday, leg, status, homeScore, awayScore, postponedReason } = req.body;
+    const fixture = await Fixture.findById(req.params.id);
+    if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+
+    if (date !== undefined) fixture.date = date;
+    if (time !== undefined) fixture.time = time;
+    if (venue !== undefined) fixture.venue = venue;
+    if (stage !== undefined) fixture.stage = stage;
+    if (matchday !== undefined) fixture.matchday = Number(matchday);
+    if (leg !== undefined) fixture.leg = Number(leg);
+    if (status !== undefined) fixture.status = status;
+    if (homeScore !== undefined) fixture.homeScore = Number(homeScore);
+    if (awayScore !== undefined) fixture.awayScore = Number(awayScore);
+    if (postponedReason !== undefined) fixture.postponedReason = postponedReason;
+
+    await fixture.save();
+
+    const populated = await Fixture.findById(fixture._id)
+      .populate('homeTeam awayTeam')
+      .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
+
+    broadcastMatchUpdate(populated);
+    if (fixture.status === 'FT') {
+      await recalculateStandings();
+    }
+
+    res.json({ success: true, message: 'Fixture updated successfully', data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 6. Match Controller: Log Match Event (Goal, Card, Substitution, VAR) + Instant Socket.io & Email Dispatch
 router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
   try {

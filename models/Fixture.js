@@ -67,8 +67,24 @@ const fixtureSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['UPCOMING', '1ST HALF', 'HT', '2ND HALF', 'FT', 'PENS'],
+    enum: ['UPCOMING', '1ST HALF', 'HT', '2ND HALF', 'FT', 'PENS', 'POSTPONED', 'RESCHEDULED', 'CANCELLED', 'ABANDONED'],
     default: 'UPCOMING'
+  },
+  postponedReason: {
+    type: String,
+    default: ''
+  },
+  originalDate: {
+    type: String,
+    default: null
+  },
+  originalTime: {
+    type: String,
+    default: null
+  },
+  rescheduledAt: {
+    type: Date,
+    default: null
   },
   minute: {
     type: Number,

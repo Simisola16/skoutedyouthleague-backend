@@ -581,6 +581,98 @@ class EmailService {
     }
   }
 
+  // 2b. Match Rescheduled / Shifted / Postponed Notice
+  static async sendMatchRescheduledNotice({
+    homeManagerEmail,
+    awayManagerEmail,
+    homeTeamName,
+    awayTeamName,
+    status = 'RESCHEDULED',
+    originalDate,
+    originalTime,
+    newDate,
+    newTime,
+    venue,
+    reason,
+    stage
+  }) {
+    try {
+      const recipients = [homeManagerEmail, awayManagerEmail].filter(Boolean);
+      if (recipients.length === 0) return { success: false, error: 'No recipients provided' };
+
+      const isPostponed = status === 'POSTPONED';
+      const isCancelled = status === 'CANCELLED' || status === 'ABANDONED';
+      const actionTitle = isPostponed ? 'Match Postponed' : isCancelled ? 'Match Cancelled' : 'Match Rescheduled / Shifted';
+      const badgeColor = isPostponed ? '#FFB800' : isCancelled ? '#FF4B4B' : '#00E5FF';
+      const subject = `⚠️ Notice: ${homeTeamName} vs ${awayTeamName} has been ${status.toLowerCase()} (${stage || 'Matchday'})`;
+
+      const content = `
+        <h2 style="color:#FFFFFF; font-size:18px; margin-top:0;">${actionTitle}</h2>
+        <p style="color:#94A3B8; font-size:14px; line-height:1.6;">
+          Attention Managers: Due to circumstances regarding pitch operations or tournament scheduling, the following match has been <strong>${status}</strong>.
+        </p>
+        <div class="highlight-box" style="border-left-color: ${badgeColor};">
+          <div style="font-size:16px; font-weight:900; color:#FFFFFF; margin-bottom:12px; text-align:center;">
+            ${homeTeamName} <span style="color:#00E676;">VS</span> ${awayTeamName}
+          </div>
+          <table style="width:100%; font-size:13px; color:#CBD5E1; border-collapse:collapse;">
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Stage:</td>
+              <td style="padding:4px 0; font-weight:700; text-align:right;">${stage || 'League Match'}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Status:</td>
+              <td style="padding:4px 0; font-weight:800; text-align:right; color:${badgeColor};">${status}</td>
+            </tr>
+            ${reason ? `
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Reason:</td>
+              <td style="padding:4px 0; font-weight:700; text-align:right; color:#F87171;">${reason}</td>
+            </tr>` : ''}
+            ${originalDate ? `
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Originally Scheduled:</td>
+              <td style="padding:4px 0; text-decoration:line-through; color:#94A3B8; text-align:right;">${originalDate} at ${originalTime || ''}</td>
+            </tr>` : ''}
+            ${!isCancelled ? `
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">${isPostponed ? 'Postponed / New Date:' : 'New Match Date:'}</td>
+              <td style="padding:4px 0; font-weight:800; text-align:right; color:#00E676;">${newDate || 'Date to be announced (TBD)'}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Kick-off Time:</td>
+              <td style="padding:4px 0; font-weight:800; text-align:right; color:#00E676;">${newTime || 'TBD'}</td>
+            </tr>` : ''}
+            <tr>
+              <td style="padding:4px 0; color:#64748B;">Venue:</td>
+              <td style="padding:4px 0; font-weight:700; text-align:right;">${venue || 'Tournament Arena'}</td>
+            </tr>
+          </table>
+        </div>
+        <p style="color:#94A3B8; font-size:13px; line-height:1.5;">
+          Please update your squad and technical staff accordingly. For further inquiries, contact tournament administration.
+        </p>
+      `;
+
+      const html = wrapEmailHtml({
+        title: actionTitle,
+        preheader: `${homeTeamName} vs ${awayTeamName} has been ${status.toLowerCase()}`,
+        content,
+        badgeText: 'SCHEDULE UPDATE'
+      });
+
+      return await dispatchMail({
+        to: recipients,
+        subject,
+        html,
+        text: `Match Notice: ${homeTeamName} vs ${awayTeamName} has been ${status}. ${reason ? `Reason: ${reason}. ` : ''}New Date: ${newDate || 'TBD'} at ${newTime || 'TBD'} (${venue || 'Tournament Arena'}).`
+      });
+    } catch (error) {
+      console.error('[EmailService Error - Match Rescheduled Notice]:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   // 3. Lineup Reminder (Urgent & Automated Cron)
   static async sendLineupReminderEmail({ managerEmail, managerName, teamName, opponentName, kickoffTime, fixtureId, date, time, venue }) {
     try {
