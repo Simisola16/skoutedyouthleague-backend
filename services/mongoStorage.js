@@ -132,7 +132,9 @@ async function streamGridFSFile(fileId, req, res, bucketName = 'media_images') {
       'Content-Type': contentType,
       'Content-Length': file.length,
       'Cache-Control': 'public, max-age=31536000, immutable',
-      'Accept-Ranges': 'bytes'
+      'Accept-Ranges': 'bytes',
+      'Access-Control-Allow-Origin': '*',
+      'Cross-Origin-Resource-Policy': 'cross-origin'
     });
 
     const downloadStream = bucket.openDownloadStream(_id);
