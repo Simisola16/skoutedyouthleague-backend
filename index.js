@@ -43,6 +43,9 @@ initSocket(io);
 
 // Middleware
 const allowedOrigins = [
+  'https://skoutedyouthleague.com',
+  'https://www.skoutedyouthleague.com',
+  'https://api.skoutedyouthleague.com',
   'https://skoutedyouthleague.vercel.app',
   'http://localhost:5055',
   'http://localhost:5173',
