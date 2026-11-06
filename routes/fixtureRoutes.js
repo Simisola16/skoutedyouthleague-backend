@@ -146,7 +146,12 @@ router.get('/:id', async (req, res) => {
       .populate('team player assistPlayer')
       .sort({ minute: 1, createdAt: 1 });
 
-    res.json({ success: true, data: { fixture, events } });
+    res.json({
+      success: true,
+      data: { fixture, events },
+      fixture,
+      events
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
