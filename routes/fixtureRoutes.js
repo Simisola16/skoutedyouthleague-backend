@@ -122,7 +122,7 @@ router.get('/', async (req, res) => {
 
     const fixtures = await Fixture.find(filter)
       .populate('homeTeam awayTeam')
-      .populate('homeLineup.startingXI.player awayLineup.startingXI.player')
+      .populate('homeLineup.startingXI.player awayLineup.startingXI.player homeLineup.bench.player awayLineup.bench.player')
       .sort({ date: 1, time: 1 });
 
     res.json({ success: true, data: fixtures });
