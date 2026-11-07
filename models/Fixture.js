@@ -90,6 +90,18 @@ const fixtureSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  periodStartedAt: {
+    type: Date,
+    default: null
+  },
+  isClockRunning: {
+    type: Boolean,
+    default: false
+  },
+  periodBaseMinute: {
+    type: Number,
+    default: 0
+  },
   homeScore: {
     type: Number,
     default: 0

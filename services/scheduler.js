@@ -3,10 +3,42 @@ const Fixture = require('../models/Fixture');
 const User = require('../models/User');
 const LeagueSettings = require('../models/LeagueSettings');
 const EmailService = require('./emailService');
-const { broadcastLeagueSettingsUpdate } = require('./socketService');
+const { broadcastLeagueSettingsUpdate, broadcastMatchUpdate } = require('./socketService');
 
 function startScheduler() {
   console.log('[Scheduler]: Starting 3-Hour Lineup Warning Cron Job (running every 5 minutes)...');
+
+  // Live Match Clock Ticker - runs every 30 seconds to auto-advance live fixtures
+  setInterval(async () => {
+    try {
+      const liveFixtures = await Fixture.find({
+        isClockRunning: true,
+        status: { $in: ['1ST HALF', '2ND HALF'] },
+        periodStartedAt: { $ne: null }
+      }).populate('homeTeam awayTeam');
+
+      for (const f of liveFixtures) {
+        const elapsedMs = Date.now() - new Date(f.periodStartedAt).getTime();
+        const elapsedMins = Math.floor(elapsedMs / 60000);
+        const computedMinute = (f.periodBaseMinute || 0) + elapsedMins;
+
+        let targetMinute = computedMinute;
+        if (f.status === '1ST HALF' && targetMinute > 55) {
+          targetMinute = 55;
+        } else if (f.status === '2ND HALF' && targetMinute > 105) {
+          targetMinute = 105;
+        }
+
+        if (targetMinute > f.minute) {
+          f.minute = targetMinute;
+          await f.save();
+          broadcastMatchUpdate(f);
+        }
+      }
+    } catch (err) {
+      console.error('[Scheduler Live Clock Ticker Error]:', err.message);
+    }
+  }, 30000);
 
   // Check every 5 minutes
   cron.schedule('*/5 * * * *', async () => {

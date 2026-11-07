@@ -233,13 +233,26 @@ router.post('/', requireAdmin, async (req, res) => {
 // 4. Match Controller: Quick Score Update (+1 / -1)
 router.patch('/:id/score', requireOfficialOrAdmin, async (req, res) => {
   try {
-    const { homeScore, awayScore, minute } = req.body;
+    const { homeScore, awayScore, minute, isClockRunning } = req.body;
     const fixture = await Fixture.findById(req.params.id);
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
 
     if (homeScore !== undefined) fixture.homeScore = Math.max(0, Number(homeScore));
     if (awayScore !== undefined) fixture.awayScore = Math.max(0, Number(awayScore));
-    if (minute !== undefined) fixture.minute = Number(minute);
+    if (minute !== undefined && !isNaN(minute)) {
+      fixture.minute = Math.max(0, Number(minute));
+      fixture.periodBaseMinute = fixture.minute;
+      if (fixture.isClockRunning) {
+        fixture.periodStartedAt = new Date();
+      }
+    }
+    if (isClockRunning !== undefined) {
+      fixture.isClockRunning = Boolean(isClockRunning);
+      if (fixture.isClockRunning) {
+        fixture.periodStartedAt = new Date();
+        fixture.periodBaseMinute = fixture.minute || 0;
+      }
+    }
 
     await fixture.save();
 
@@ -259,15 +272,93 @@ router.patch('/:id/score', requireOfficialOrAdmin, async (req, res) => {
   }
 });
 
-// 5. Match Controller: Change Match Period / Status ('UPCOMING', '1ST HALF', 'HT', '2ND HALF', 'FT', 'PENS')
-router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
+// 4b. Match Controller: Clock Control (Play / Pause / Set Minute)
+router.patch('/:id/clock', requireOfficialOrAdmin, async (req, res) => {
   try {
-    const { status, minute } = req.body;
+    const { isClockRunning, minute } = req.body;
     const fixture = await Fixture.findById(req.params.id);
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
 
-    if (status) fixture.status = status;
-    if (minute !== undefined) fixture.minute = Number(minute);
+    if (minute !== undefined && !isNaN(minute)) {
+      fixture.minute = Math.max(0, Number(minute));
+      fixture.periodBaseMinute = fixture.minute;
+    }
+
+    if (isClockRunning !== undefined) {
+      fixture.isClockRunning = Boolean(isClockRunning);
+    }
+
+    if (fixture.isClockRunning) {
+      fixture.periodStartedAt = new Date();
+      fixture.periodBaseMinute = fixture.minute || 0;
+    } else {
+      fixture.periodStartedAt = null;
+    }
+
+    await fixture.save();
+
+    const populated = await Fixture.findById(fixture._id)
+      .populate('homeTeam awayTeam')
+      .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
+
+    broadcastMatchUpdate(populated);
+
+    res.json({ success: true, data: populated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 5. Match Controller: Change Match Period / Status ('UPCOMING', '1ST HALF', 'HT', '2ND HALF', 'FT', 'PENS')
+router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
+  try {
+    const { status, minute, isClockRunning } = req.body;
+    const fixture = await Fixture.findById(req.params.id);
+    if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+
+    if (status) {
+      fixture.status = status;
+      if (status === '1ST HALF') {
+        const startMin = (minute !== undefined && !isNaN(minute) && Number(minute) > 0) ? Number(minute) : 1;
+        fixture.minute = startMin;
+        fixture.periodBaseMinute = startMin;
+        fixture.periodStartedAt = new Date();
+        fixture.isClockRunning = true;
+      } else if (status === 'HT') {
+        fixture.minute = 45;
+        fixture.isClockRunning = false;
+        fixture.periodStartedAt = null;
+      } else if (status === '2ND HALF') {
+        const startMin = (minute !== undefined && !isNaN(minute) && Number(minute) >= 45) ? Number(minute) : 46;
+        fixture.minute = startMin;
+        fixture.periodBaseMinute = startMin;
+        fixture.periodStartedAt = new Date();
+        fixture.isClockRunning = true;
+      } else if (status === 'FT') {
+        fixture.minute = 90;
+        fixture.isClockRunning = false;
+        fixture.periodStartedAt = null;
+      } else if (status === 'PENS' || status === 'UPCOMING' || status === 'RESCHEDULED' || status === 'POSTPONED') {
+        fixture.isClockRunning = false;
+        fixture.periodStartedAt = null;
+      }
+    }
+
+    if (minute !== undefined && !isNaN(minute)) {
+      fixture.minute = Math.max(0, Number(minute));
+      fixture.periodBaseMinute = fixture.minute;
+      if (fixture.isClockRunning) {
+        fixture.periodStartedAt = new Date();
+      }
+    }
+
+    if (isClockRunning !== undefined) {
+      fixture.isClockRunning = Boolean(isClockRunning);
+      if (fixture.isClockRunning) {
+        fixture.periodStartedAt = new Date();
+        fixture.periodBaseMinute = fixture.minute || 0;
+      }
+    }
 
     await fixture.save();
 
