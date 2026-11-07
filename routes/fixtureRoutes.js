@@ -656,6 +656,53 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
   }
 });
 
+// 6b. Update Match Event (Edit Minute, Player, Description)
+router.patch('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) => {
+  try {
+    const { minute, description, playerId, assistPlayerId } = req.body;
+    const event = await MatchEvent.findById(req.params.eventId);
+    if (!event) return res.status(404).json({ success: false, error: 'Event not found' });
+
+    if (minute !== undefined && !isNaN(minute)) {
+      event.minute = Math.max(0, Number(minute));
+    }
+    if (description !== undefined) event.description = description;
+    if (playerId !== undefined) event.player = playerId || null;
+    if (assistPlayerId !== undefined) event.assistPlayer = assistPlayerId || null;
+
+    await event.save();
+
+    const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer');
+    broadcastMatchEvent(populatedEvent);
+
+    const events = await MatchEvent.find({ fixture: req.params.id })
+      .populate('team player assistPlayer')
+      .sort({ minute: 1, createdAt: 1 });
+
+    res.json({ success: true, message: 'Event updated successfully', data: { event: populatedEvent, events } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6c. Delete Match Event
+router.delete('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) => {
+  try {
+    const event = await MatchEvent.findById(req.params.eventId);
+    if (!event) return res.status(404).json({ success: false, error: 'Event not found' });
+
+    await MatchEvent.findByIdAndDelete(req.params.eventId);
+
+    const events = await MatchEvent.find({ fixture: req.params.id })
+      .populate('team player assistPlayer')
+      .sort({ minute: 1, createdAt: 1 });
+
+    res.json({ success: true, message: 'Event deleted successfully', data: { events } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // 7. Update Match In-Game Stats (Possession, Shots, Corners, Fouls)
 router.patch('/:id/stats', requireOfficialOrAdmin, async (req, res) => {
   try {
