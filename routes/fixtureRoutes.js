@@ -143,7 +143,7 @@ router.get('/:id', async (req, res) => {
     }
 
     const events = await MatchEvent.find({ fixture: fixture._id })
-      .populate('team player assistPlayer')
+      .populate('team player assistPlayer inPlayer outPlayer')
       .sort({ minute: 1, createdAt: 1 });
 
     res.json({
@@ -503,18 +503,24 @@ router.put('/:id', requireAdmin, async (req, res) => {
 router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
   try {
     const { fixtureId } = req.params;
-    const { minute, type, teamId, playerId, assistPlayerId, description } = req.body;
+    const { minute, type, teamId, playerId, assistPlayerId, inPlayerId, outPlayerId, inPlayer, outPlayer, description } = req.body;
 
     const fixture = await Fixture.findById(req.params.id).populate('homeTeam awayTeam');
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
+
+    const isSub = type === 'SUB_IN' || type === 'SUBSTITUTION';
+    const effectiveInPlayer = inPlayerId || inPlayer || (isSub ? playerId : null);
+    const effectiveOutPlayer = outPlayerId || outPlayer || (isSub ? assistPlayerId : null);
 
     const event = new MatchEvent({
       fixture: fixture._id,
       minute: Number(minute) || fixture.minute || 0,
       type,
       team: teamId,
-      player: playerId || null,
-      assistPlayer: assistPlayerId || null,
+      player: effectiveInPlayer || playerId || null,
+      assistPlayer: effectiveOutPlayer || assistPlayerId || null,
+      inPlayer: effectiveInPlayer || null,
+      outPlayer: effectiveOutPlayer || null,
       description: description || '',
       scoreAtEvent: {
         home: fixture.homeScore,
@@ -636,7 +642,7 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
 
     await event.save();
 
-    const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer');
+    const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer inPlayer outPlayer');
     const populatedFixture = await Fixture.findById(fixture._id)
       .populate('homeTeam awayTeam')
       .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
@@ -659,7 +665,7 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
 // 6b. Update Match Event (Edit Minute, Player, Description)
 router.patch('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) => {
   try {
-    const { minute, description, playerId, assistPlayerId } = req.body;
+    const { minute, description, playerId, assistPlayerId, inPlayerId, outPlayerId } = req.body;
     const event = await MatchEvent.findById(req.params.eventId);
     if (!event) return res.status(404).json({ success: false, error: 'Event not found' });
 
@@ -669,14 +675,16 @@ router.patch('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) =>
     if (description !== undefined) event.description = description;
     if (playerId !== undefined) event.player = playerId || null;
     if (assistPlayerId !== undefined) event.assistPlayer = assistPlayerId || null;
+    if (inPlayerId !== undefined) event.inPlayer = inPlayerId || null;
+    if (outPlayerId !== undefined) event.outPlayer = outPlayerId || null;
 
     await event.save();
 
-    const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer');
+    const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer inPlayer outPlayer');
     broadcastMatchEvent(populatedEvent);
 
     const events = await MatchEvent.find({ fixture: req.params.id })
-      .populate('team player assistPlayer')
+      .populate('team player assistPlayer inPlayer outPlayer')
       .sort({ minute: 1, createdAt: 1 });
 
     res.json({ success: true, message: 'Event updated successfully', data: { event: populatedEvent, events } });
@@ -694,7 +702,7 @@ router.delete('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) =
     await MatchEvent.findByIdAndDelete(req.params.eventId);
 
     const events = await MatchEvent.find({ fixture: req.params.id })
-      .populate('team player assistPlayer')
+      .populate('team player assistPlayer inPlayer outPlayer')
       .sort({ minute: 1, createdAt: 1 });
 
     res.json({ success: true, message: 'Event deleted successfully', data: { events } });

@@ -14,7 +14,7 @@ const matchEventSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['GOAL', 'OWN_GOAL', 'YELLOW_CARD', 'RED_CARD', 'SUB_IN', 'SUB_OUT', 'VAR_DECISION', 'PENALTY_MISSED'],
+    enum: ['GOAL', 'OWN_GOAL', 'YELLOW_CARD', 'RED_CARD', 'SUB_IN', 'SUB_OUT', 'SUBSTITUTION', 'VAR_DECISION', 'VAR', 'PENALTY_MISSED'],
     required: true
   },
   team: {
@@ -27,6 +27,16 @@ const matchEventSchema = new mongoose.Schema({
     ref: 'Player'
   },
   assistPlayer: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Player',
+    default: null
+  },
+  inPlayer: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Player',
+    default: null
+  },
+  outPlayer: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Player',
     default: null
