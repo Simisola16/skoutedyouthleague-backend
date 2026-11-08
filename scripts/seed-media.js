@@ -46,7 +46,7 @@ The first round of fixtures exceeded expectations with intense tempo, rapid vert
 - **Dominant Midfield Control:** Several teams utilized inverted full-backs to establish numerical superiority in the middle third.
 - **Goalkeeping Excellence:** Three clean sheets were preserved thanks to world-class reaction saves and sweeper-keeper command.
 - **Tactical Maturity:** Coaches demonstrated remarkable structural discipline, proving that U-19 football in the region is advancing technically at an extraordinary rate.`,
-    coverImageUrl: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1200',
+    coverImageUrl: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=1200',
     category: 'Matchday Recap',
     author: 'Coach Marcus Davies, Tactical Analyst',
     readTime: '3 min read',
@@ -175,7 +175,7 @@ const sponsors = [
   {
     name: 'African Talent Scouting Hub',
     tier: 'Scouting Partner',
-    logoUrl: 'https://images.unsplash.com/photo-1517649763962-0c623266ddc0?auto=format&fit=crop&q=80&w=400',
+    logoUrl: 'https://images.unsplash.com/photo-1517466787929-bc90951d0974?auto=format&fit=crop&q=80&w=400',
     websiteUrl: 'https://skoutedyouthleague.com',
     description: 'Connecting top African youth footballers directly with international scouting networks.',
     order: 4,
@@ -247,7 +247,7 @@ async function seedMedia() {
           title: 'Thunderous 90th Minute Equalizer',
           caption: 'Dramatic stoppage-time volley sends the away supporters into raptures in Leg 1 thriller.',
           category: 'Matchday Action',
-          url: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1600',
+          url: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=1600',
           matchTag: 'Matchday 1: Alamu FC vs Telu Stars',
           tags: ['Volley', 'Goal', 'Stoppage Time', 'Thriller'],
           views: 342,
@@ -390,7 +390,7 @@ async function seedMedia() {
           title: 'Championship Arena Under the Floodlights',
           caption: 'Atmospheric panoramic view of the official Skouted Youth League stadium on game night.',
           category: 'Hero Banner',
-          url: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&q=80&w=1800',
+          url: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&q=80&w=1800',
           matchTag: 'Stadium Showcase',
           tags: ['Stadium', 'Floodlights', 'Arena', 'Hero'],
           views: 890,

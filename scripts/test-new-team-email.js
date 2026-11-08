@@ -22,7 +22,7 @@ async function main() {
     homeKitColor: '#00E676',
     awayKitColor: '#3B82F6',
     createdAt: new Date(),
-    logo: 'https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=400&q=80'
+    logo: 'https://images.unsplash.com/photo-1574629810360-7efbbe195018?auto=format&fit=crop&w=400&q=80'
   };
 
   const tokenPayload = {
