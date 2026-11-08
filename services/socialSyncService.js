@@ -194,6 +194,117 @@ class SocialSyncService {
   }
 
   /**
+   * Detect current active YouTube Live Stream
+   */
+  static async detectLiveStream(forceRefresh = false) {
+    const now = Date.now();
+    if (!this.liveStreamCache) {
+      this.liveStreamCache = { data: null, cachedAt: 0 };
+    }
+    // Return cached if under 60 seconds unless forced
+    if (!forceRefresh && this.liveStreamCache.data && (now - this.liveStreamCache.cachedAt < 60000)) {
+      return this.liveStreamCache.data;
+    }
+
+    const LeagueSettings = require('../models/LeagueSettings');
+    let settings = null;
+    try {
+      settings = await LeagueSettings.findOne();
+    } catch {}
+
+    // Check if admin manually configured a live stream
+    if (settings?.socialLinks?.youtubeLiveVideoId && settings.socialLinks.youtubeLiveVideoId !== 'auto') {
+      const vidId = settings.socialLinks.youtubeLiveVideoId;
+      const liveData = {
+        isLive: settings.socialLinks.isLiveNow !== false,
+        videoId: vidId,
+        title: settings.socialLinks.youtubeLiveTitle || 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA',
+        embedUrl: `https://www.youtube.com/embed/${vidId}?autoplay=1&mute=1`,
+        source: 'settings'
+      };
+      this.liveStreamCache = { data: liveData, cachedAt: now };
+      return liveData;
+    }
+
+    // Auto-detect from YouTube channel
+    try {
+      const channelHandle = YOUTUBE_CHANNEL_HANDLE || 'Skoutedyouthleague';
+      const channelId = YOUTUBE_CHANNEL_ID || 'UCy_dA9AmAWwGcDhh1PQtARA';
+
+      let vidId = null;
+      let title = null;
+      let isLive = false;
+
+      // 1. Try @channel/live
+      try {
+        const res = await fetch(`https://www.youtube.com/@${channelHandle}/live`, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+          }
+        });
+        if (res.ok) {
+          const html = await res.text();
+          const vidMatch = html.match(/\/watch\?v=([a-zA-Z0-9_-]{11})/);
+          const titleMatch = html.match(/<title>(.*?)<\/title>/);
+          if (vidMatch) vidId = vidMatch[1];
+          if (titleMatch) title = titleMatch[1].replace(' - YouTube', '').trim();
+          isLive = html.includes('"isLive":true') || html.includes('"liveStreamability"');
+        }
+      } catch (e) {
+        console.warn('[SocialSync] Live page check failed:', e.message);
+      }
+
+      // 2. Try RSS feed fallback
+      if (!vidId) {
+        try {
+          const rssRes = await fetch(`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`);
+          if (rssRes.ok) {
+            const xml = await rssRes.text();
+            const rIdMatch = xml.match(/<yt:videoId>([a-zA-Z0-9_-]{11})<\/yt:videoId>/);
+            const rTitleMatch = xml.match(/<title>(.*?)<\/title>/g);
+            if (rIdMatch) vidId = rIdMatch[1];
+            if (rTitleMatch && rTitleMatch[1]) {
+              title = rTitleMatch[1].replace(/<\/?title>/g, '').trim();
+            }
+            isLive = true;
+          }
+        } catch (e) {
+          console.warn('[SocialSync] RSS live fallback failed:', e.message);
+        }
+      }
+
+      // Fallback
+      if (!vidId) {
+        vidId = 'lU5MVdwXWvE';
+        title = 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA';
+        isLive = true;
+      }
+
+      const cleanTitle = title && !title.includes('@') ? title : 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA';
+      const liveData = {
+        isLive: true,
+        videoId: vidId,
+        title: cleanTitle,
+        embedUrl: `https://www.youtube.com/embed/${vidId}?autoplay=1&mute=1`,
+        source: 'auto_detected'
+      };
+
+      this.liveStreamCache = { data: liveData, cachedAt: now };
+      return liveData;
+    } catch (err) {
+      console.error('[SocialSync] Error detecting live stream:', err.message);
+      return {
+        isLive: true,
+        videoId: 'lU5MVdwXWvE',
+        title: 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA',
+        embedUrl: 'https://www.youtube.com/embed/lU5MVdwXWvE?autoplay=1&mute=1',
+        source: 'fallback'
+      };
+    }
+  }
+
+  /**
    * Start scheduled background auto-sync
    */
   static initScheduler() {

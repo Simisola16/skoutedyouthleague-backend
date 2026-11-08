@@ -50,6 +50,69 @@ router.get('/posts', async (req, res) => {
 });
 
 /**
+ * 2. GET /api/social/live
+ * Real-time active YouTube Live Stream info & playable embed URL
+ */
+router.get('/live', async (req, res) => {
+  try {
+    const liveInfo = await SocialSyncService.detectLiveStream(req.query.refresh === 'true');
+    res.json({
+      success: true,
+      data: liveInfo
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 3. POST /api/social/live
+ * Admin manual broadcast / override for active live stream
+ */
+router.post('/live', requireAdmin, async (req, res) => {
+  try {
+    const { videoId, title, isLiveNow, url } = req.body;
+    let extractedId = videoId;
+    if (url) {
+      const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|live\/))([a-zA-Z0-9_-]{11})/);
+      if (match) extractedId = match[1];
+    }
+
+    const LeagueSettings = require('../models/LeagueSettings');
+    let settings = await LeagueSettings.findOne();
+    if (!settings) settings = new LeagueSettings();
+
+    if (!settings.socialLinks) settings.socialLinks = {};
+    if (extractedId) settings.socialLinks.youtubeLiveVideoId = extractedId;
+    if (title) settings.socialLinks.youtubeLiveTitle = title;
+    if (typeof isLiveNow === 'boolean') settings.socialLinks.isLiveNow = isLiveNow;
+    if (extractedId) {
+      settings.socialLinks.youtubeLiveEmbedUrl = `https://www.youtube.com/embed/${extractedId}?autoplay=1&mute=1`;
+    }
+
+    await settings.save();
+
+    // Clear cache & fetch updated
+    SocialSyncService.liveStreamCache = { data: null, cachedAt: 0 };
+    const updatedLive = await SocialSyncService.detectLiveStream(true);
+
+    // Broadcast to all sockets
+    try {
+      const io = require('../services/socketService').getIO();
+      if (io) io.emit('live_stream_updated', updatedLive);
+    } catch {}
+
+    res.json({
+      success: true,
+      message: 'Live stream settings updated and broadcasted!',
+      data: updatedLive
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * 2. POST /api/social/sync-youtube
  * Trigger an immediate sync of YouTube channel videos
  */
