@@ -19,28 +19,35 @@ router.get('/standings', async (req, res) => {
 // 2. Tournament Leaders: Golden Boot (Top Scorers), Playmaker (Top Assists), Clean Sheets
 router.get('/leaders', async (req, res) => {
   try {
+    const limit = parseInt(req.query.limit || '50', 10);
+
     // Top Scorers
     const topScorers = await Player.find({ 'stats.goals': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo')
-      .sort({ 'stats.goals': -1, 'stats.assists': -1 })
-      .limit(10);
+      .populate('team', 'name shortCode logo logoUrl')
+      .sort({ 'stats.goals': -1, 'stats.assists': -1, 'stats.matches': 1 })
+      .limit(limit);
 
     // Top Assists (Playmakers)
     const topAssists = await Player.find({ 'stats.assists': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo')
-      .sort({ 'stats.assists': -1, 'stats.goals': -1 })
-      .limit(10);
+      .populate('team', 'name shortCode logo logoUrl')
+      .sort({ 'stats.assists': -1, 'stats.goals': -1, 'stats.matches': 1 })
+      .limit(limit);
 
     // Clean Sheets (Goalkeepers)
     const topKeepers = await Player.find({ position: 'GK', isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo')
+      .populate('team', 'name shortCode logo logoUrl')
       .sort({ 'stats.cleanSheets': -1, 'stats.matches': -1 })
-      .limit(10);
+      .limit(limit);
 
     // Tournament Summary
     const totalGoals = await Player.aggregate([
       { $match: { isDeleted: { $ne: true } } },
       { $group: { _id: null, total: { $sum: '$stats.goals' } } }
+    ]);
+
+    const totalAssists = await Player.aggregate([
+      { $match: { isDeleted: { $ne: true } } },
+      { $group: { _id: null, total: { $sum: '$stats.assists' } } }
     ]);
 
     const totalMatches = await Fixture.countDocuments({ status: 'FT', isDeleted: { $ne: true } });
@@ -52,6 +59,7 @@ router.get('/leaders', async (req, res) => {
         topAssists,
         topKeepers,
         totalGoals: totalGoals[0]?.total || 0,
+        totalAssists: totalAssists[0]?.total || 0,
         totalMatches
       }
     });
