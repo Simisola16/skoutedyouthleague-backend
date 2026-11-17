@@ -23,19 +23,19 @@ router.get('/leaders', async (req, res) => {
 
     // Top Scorers
     const topScorers = await Player.find({ 'stats.goals': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl')
+      .populate('team', 'name shortCode logo logoUrl stats')
       .sort({ 'stats.goals': -1, 'stats.assists': -1, 'stats.matches': 1 })
       .limit(limit);
 
     // Top Assists (Playmakers)
     const topAssists = await Player.find({ 'stats.assists': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl')
+      .populate('team', 'name shortCode logo logoUrl stats')
       .sort({ 'stats.assists': -1, 'stats.goals': -1, 'stats.matches': 1 })
       .limit(limit);
 
     // Clean Sheets (Goalkeepers)
     const topKeepers = await Player.find({ position: 'GK', isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl')
+      .populate('team', 'name shortCode logo logoUrl stats')
       .sort({ 'stats.cleanSheets': -1, 'stats.matches': -1 })
       .limit(limit);
 
