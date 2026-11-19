@@ -7,6 +7,7 @@ const Player = require('../models/Player');
 const FanSubscription = require('../models/FanSubscription');
 const User = require('../models/User');
 const EmailService = require('../services/emailService');
+const pushService = require('../services/pushNotificationService');
 const LeagueService = require('../services/leagueService');
 const { broadcastMatchUpdate, broadcastMatchEvent, broadcastStandingsUpdate } = require('../services/socketService');
 const { requireAdmin, requireOfficialOrAdmin } = require('../middleware/authMiddleware');
@@ -262,8 +263,11 @@ router.patch('/:id/score', requireOfficialOrAdmin, async (req, res) => {
 
     broadcastMatchUpdate(populated);
 
-    if (fixture.status === 'FT') {
+    if (fixture.status === '1ST HALF') {
+      pushService.notifyKickoff(populated).catch(err => console.error('[Push Kickoff Error]:', err.message));
+    } else if (fixture.status === 'FT') {
       await recalculateStandings();
+      pushService.notifyFullTime(populated).catch(err => console.error('[Push FullTime Error]:', err.message));
     }
 
     res.json({ success: true, data: populated });
@@ -368,8 +372,11 @@ router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
 
     broadcastMatchUpdate(populated);
 
-    if (fixture.status === 'FT') {
+    if (fixture.status === '1ST HALF') {
+      pushService.notifyKickoff(populated).catch(err => console.error('[Push Kickoff Error]:', err.message));
+    } else if (fixture.status === 'FT') {
       await recalculateStandings();
+      pushService.notifyFullTime(populated).catch(err => console.error('[Push FullTime Error]:', err.message));
     }
 
     res.json({ success: true, data: populated });
@@ -650,6 +657,47 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
     // Realtime broadcast to all clients & room
     broadcastMatchEvent(populatedEvent);
     broadcastMatchUpdate(populatedFixture);
+
+    // ASYNC WEB PUSH NOTIFICATIONS (GOALS, SUBS, CARDS)
+    (async () => {
+      try {
+        if (type === 'GOAL') {
+          const isHome = teamId ? fixture.homeTeam._id.toString() === teamId.toString() : true;
+          const scoringTeam = isHome ? fixture.homeTeam : fixture.awayTeam;
+          pushService.notifyGoal(populatedFixture, {
+            scoringTeam,
+            player: populatedEvent.player,
+            minute: event.minute
+          });
+        } else if (type === 'OWN_GOAL') {
+          const isHome = teamId ? fixture.homeTeam._id.toString() === teamId.toString() : true;
+          const creditedTeam = isHome ? fixture.awayTeam : fixture.homeTeam;
+          pushService.notifyGoal(populatedFixture, {
+            scoringTeam: creditedTeam,
+            player: populatedEvent.player ? { name: `${populatedEvent.player.firstName} ${populatedEvent.player.lastName} (O.G.)` } : { name: `${creditedTeam.name} (O.G.)` },
+            minute: event.minute
+          });
+        } else if (isSub) {
+          const subTeam = populatedEvent.team || (teamId ? (fixture.homeTeam._id.toString() === teamId.toString() ? fixture.homeTeam : fixture.awayTeam) : fixture.homeTeam);
+          pushService.notifySub(populatedFixture, {
+            team: subTeam,
+            playerIn: populatedEvent.inPlayer || populatedEvent.player,
+            playerOut: populatedEvent.outPlayer || populatedEvent.assistPlayer,
+            minute: event.minute
+          });
+        } else if (type === 'YELLOW_CARD' || type === 'RED_CARD') {
+          const cardTeam = populatedEvent.team || (teamId ? (fixture.homeTeam._id.toString() === teamId.toString() ? fixture.homeTeam : fixture.awayTeam) : fixture.homeTeam);
+          pushService.notifyCard(populatedFixture, {
+            team: cardTeam,
+            player: populatedEvent.player,
+            cardType: type,
+            minute: event.minute
+          });
+        }
+      } catch (pushErr) {
+        console.error('[WebPush Dispatch Error]:', pushErr.message);
+      }
+    })();
 
     res.status(201).json({
       success: true,

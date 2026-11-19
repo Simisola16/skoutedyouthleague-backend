@@ -27,6 +27,7 @@ const sponsorRoutes = require('./routes/sponsorRoutes');
 const galleryRoutes = require('./routes/galleryRoutes');
 const mediaRoutes = require('./routes/mediaRoutes');
 const socialRoutes = require('./routes/socialRoutes');
+const pushRoutes = require('./routes/pushRoutes');
 const SocialSyncService = require('./services/socialSyncService');
 
 const app = express();
@@ -84,6 +85,7 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/uploads', mediaRoutes);
 app.use('/uploads', mediaRoutes);
 app.use('/api/social', socialRoutes);
+app.use('/api/push', pushRoutes);
 
 // Static assets (Logo, brand graphics, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
