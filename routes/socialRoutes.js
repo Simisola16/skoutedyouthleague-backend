@@ -12,7 +12,7 @@ const SOCIAL_SYNC_SECRET = process.env.SOCIAL_SYNC_SECRET || 'skouted_social_syn
  */
 router.get('/posts', async (req, res) => {
   try {
-    const { platform, limit = 24, page = 1 } = req.query;
+    const { platform, limit = 24, page = 1, refresh } = req.query;
     const filter = {};
 
     if (platform && platform !== 'all') {
@@ -21,8 +21,14 @@ router.get('/posts', async (req, res) => {
 
     const parsedLimit = Math.min(Math.max(parseInt(limit) || 24, 1), 100);
     const skip = (Math.max(parseInt(page) || 1, 1) - 1) * parsedLimit;
+    const isYouTubeQuery = !platform || platform === 'all' || platform.toLowerCase() === 'youtube';
 
-    const [posts, total] = await Promise.all([
+    // Explicit refresh waits for a fresh YouTube sync before querying MongoDB
+    if (refresh === 'true' && isYouTubeQuery) {
+      await SocialSyncService.syncYouTube().catch(() => {});
+    }
+
+    let [posts, total] = await Promise.all([
       SocialPost.find(filter)
         .sort({ pinned: -1, publishedAt: -1 })
         .skip(skip)
@@ -31,9 +37,23 @@ router.get('/posts', async (req, res) => {
       SocialPost.countDocuments(filter)
     ]);
 
-    // If database is completely empty for YouTube on first load, trigger an inline sync
-    if (total === 0 && (!platform || platform === 'all' || platform === 'youtube')) {
-      SocialSyncService.syncYouTube().catch(() => {});
+    // If DB is empty on first load, sync inline; if stale (> 3 minutes), sync in background
+    if (isYouTubeQuery && refresh !== 'true') {
+      const lastSyncAt = SocialSyncService.lastSyncAt || 0;
+      const isStale = Date.now() - lastSyncAt > 3 * 60 * 1000;
+      if (total === 0) {
+        await SocialSyncService.syncYouTube().catch(() => {});
+        [posts, total] = await Promise.all([
+          SocialPost.find(filter)
+            .sort({ pinned: -1, publishedAt: -1 })
+            .skip(skip)
+            .limit(parsedLimit)
+            .lean(),
+          SocialPost.countDocuments(filter)
+        ]);
+      } else if (isStale) {
+        SocialSyncService.syncYouTube().catch(() => {});
+      }
     }
 
     res.json({
@@ -71,11 +91,15 @@ router.get('/live', async (req, res) => {
  */
 router.post('/live', requireAdmin, async (req, res) => {
   try {
-    const { videoId, title, isLiveNow, url } = req.body;
-    let extractedId = videoId;
-    if (url) {
-      const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|live\/))([a-zA-Z0-9_-]{11})/);
+    const { videoId, title, isLiveNow, url, mode } = req.body;
+    const isAutoMode = mode === 'auto' || videoId === 'auto' || url === 'auto';
+
+    let extractedId = isAutoMode ? 'auto' : videoId;
+    if (!isAutoMode && url) {
+      const trimmed = url.trim();
+      const match = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|live\/|shorts\/))([a-zA-Z0-9_-]{11})/);
       if (match) extractedId = match[1];
+      else if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) extractedId = trimmed;
     }
 
     const LeagueSettings = require('../models/LeagueSettings');
@@ -83,11 +107,19 @@ router.post('/live', requireAdmin, async (req, res) => {
     if (!settings) settings = new LeagueSettings();
 
     if (!settings.socialLinks) settings.socialLinks = {};
-    if (extractedId) settings.socialLinks.youtubeLiveVideoId = extractedId;
-    if (title) settings.socialLinks.youtubeLiveTitle = title;
-    if (typeof isLiveNow === 'boolean') settings.socialLinks.isLiveNow = isLiveNow;
-    if (extractedId) {
-      settings.socialLinks.youtubeLiveEmbedUrl = `https://www.youtube.com/embed/${extractedId}?autoplay=1&mute=1`;
+
+    if (isAutoMode) {
+      settings.socialLinks.youtubeLiveVideoId = 'auto';
+      settings.socialLinks.youtubeLiveTitle = '';
+      settings.socialLinks.youtubeLiveEmbedUrl = '';
+      settings.socialLinks.isLiveNow = false;
+    } else {
+      if (extractedId) settings.socialLinks.youtubeLiveVideoId = extractedId;
+      if (title) settings.socialLinks.youtubeLiveTitle = title;
+      if (typeof isLiveNow === 'boolean') settings.socialLinks.isLiveNow = isLiveNow;
+      if (extractedId) {
+        settings.socialLinks.youtubeLiveEmbedUrl = `https://www.youtube.com/embed/${extractedId}?autoplay=1&mute=1`;
+      }
     }
 
     await settings.save();
@@ -104,7 +136,9 @@ router.post('/live', requireAdmin, async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Live stream settings updated and broadcasted!',
+      message: isAutoMode
+        ? 'Switched to YouTube Auto-Detect mode and refreshed active broadcast!'
+        : 'Live stream settings updated and broadcasted!',
       data: updatedLive
     });
   } catch (err) {
@@ -114,15 +148,20 @@ router.post('/live', requireAdmin, async (req, res) => {
 
 /**
  * 2. POST /api/social/sync-youtube
- * Trigger an immediate sync of YouTube channel videos
+ * Trigger an immediate sync of YouTube channel videos & active live stream
  */
 router.post('/sync-youtube', async (req, res) => {
   try {
-    const result = await SocialSyncService.syncYouTube();
+    const [result, liveData] = await Promise.all([
+      SocialSyncService.syncYouTube(),
+      SocialSyncService.detectLiveStream(true).catch(() => null)
+    ]);
     res.json({
       success: true,
       message: `YouTube sync completed successfully. Synced ${result.count} posts.`,
-      count: result.count
+      count: result.count,
+      syncedCount: result.count,
+      live: liveData
     });
   } catch (err) {
     console.error('[Social API] YouTube sync error:', err);
@@ -162,7 +201,8 @@ router.post('/webhook', async (req, res) => {
 router.post('/curate', requireAdmin, async (req, res) => {
   try {
     const {
-      postUrl,
+      postUrl: rawPostUrl,
+      url: rawUrl,
       platform: userPlatform,
       title: userTitle,
       caption: userCaption,
@@ -171,6 +211,7 @@ router.post('/curate', requireAdmin, async (req, res) => {
       pinned
     } = req.body;
 
+    const postUrl = (rawPostUrl || rawUrl || '').trim();
     if (!postUrl) {
       return res.status(400).json({ success: false, error: 'Post URL is required' });
     }
@@ -189,10 +230,11 @@ router.post('/curate', requireAdmin, async (req, res) => {
     let thumbnailUrl = userThumb || '';
     let mediaType = userMediaType || (detectedPlatform === 'youtube' ? 'video' : 'post');
     let externalId = `curated_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    let embeddable = true;
 
     // If YouTube URL, attempt to pull oEmbed metadata
     if (detectedPlatform === 'youtube') {
-      const match = postUrl.match(/(?:v=|\/embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=)([^#&?]*)/);
+      const match = postUrl.match(/(?:v=|\/embed\/|youtu\.be\/|\/live\/|\/shorts\/|\/v\/|\/e\/|watch\?v=)([a-zA-Z0-9_-]{11})/);
       if (match && match[1]) {
         externalId = match[1];
         if (!thumbnailUrl) {
@@ -205,21 +247,29 @@ router.post('/curate', requireAdmin, async (req, res) => {
           const oe = await oembedRes.json();
           if (!title) title = oe.title || '';
           if (!thumbnailUrl) thumbnailUrl = oe.thumbnail_url || '';
+        } else if (oembedRes.status === 401 || oembedRes.status === 403) {
+          embeddable = false;
         }
       } catch {}
     }
 
-    const post = await SocialPost.create({
-      platform: detectedPlatform,
-      externalId,
-      title: title || `${detectedPlatform.toUpperCase()} Spotlight`,
-      caption,
-      postUrl,
-      thumbnailUrl,
-      mediaType,
-      pinned: Boolean(pinned),
-      publishedAt: new Date()
-    });
+    const post = await SocialPost.findOneAndUpdate(
+      { externalId },
+      {
+        $set: {
+          platform: detectedPlatform,
+          title: title || `${detectedPlatform.toUpperCase()} Spotlight`,
+          caption,
+          postUrl,
+          thumbnailUrl,
+          mediaType,
+          pinned: Boolean(pinned),
+          embeddable,
+          publishedAt: new Date()
+        }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
 
     res.status(201).json({
       success: true,
@@ -245,7 +295,7 @@ router.patch('/posts/:id/pin', requireAdmin, async (req, res) => {
     post.pinned = !post.pinned;
     await post.save();
 
-    res.json({ success: true, data: post });
+    res.json({ success: true, pinned: post.pinned, data: post });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

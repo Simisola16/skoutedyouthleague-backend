@@ -43,6 +43,14 @@ const socialPostSchema = new mongoose.Schema({
     type: Boolean, 
     default: false,
     index: true
+  },
+  embeddable: {
+    type: Boolean,
+    default: true
+  },
+  isLiveStream: {
+    type: Boolean,
+    default: false
   }
 }, { 
   timestamps: true 

@@ -91,19 +91,19 @@ const leagueSettingsSchema = new mongoose.Schema({
     },
     youtubeLiveEmbedUrl: {
       type: String,
-      default: 'https://www.youtube.com/embed/lU5MVdwXWvE?autoplay=1&mute=1'
+      default: ''
     },
     youtubeLiveVideoId: {
       type: String,
-      default: 'lU5MVdwXWvE'
+      default: 'auto'
     },
     youtubeLiveTitle: {
       type: String,
-      default: 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA'
+      default: ''
     },
     isLiveNow: {
       type: Boolean,
-      default: true
+      default: false
     }
   },
   lastUpdatedBy: {
@@ -134,10 +134,10 @@ leagueSettingsSchema.statics.getSettings = async function() {
         instagram: 'https://www.instagram.com/skouted_youth_league',
         youtube: 'https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1',
         youtubeChannelId: 'UCy_dA9AmAWwGcDhh1PQtARA',
-        youtubeLiveEmbedUrl: 'https://www.youtube.com/embed/lU5MVdwXWvE?autoplay=1&mute=1',
-        youtubeLiveVideoId: 'lU5MVdwXWvE',
-        youtubeLiveTitle: 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA',
-        isLiveNow: true
+        youtubeLiveEmbedUrl: '',
+        youtubeLiveVideoId: 'auto',
+        youtubeLiveTitle: '',
+        isLiveNow: false
       }
     });
   } else {
@@ -149,17 +149,22 @@ leagueSettingsSchema.statics.getSettings = async function() {
       }
       modified = true;
     }
-    if (!settings.socialLinks || !settings.socialLinks.youtubeLiveVideoId || settings.socialLinks.youtubeLiveEmbedUrl?.includes('live_stream?channel=')) {
+    if (
+      !settings.socialLinks ||
+      !settings.socialLinks.youtubeLiveVideoId ||
+      settings.socialLinks.youtubeLiveVideoId === 'lU5MVdwXWvE' ||
+      settings.socialLinks.youtubeLiveEmbedUrl?.includes('live_stream?channel=')
+    ) {
       settings.socialLinks = {
         ...(settings.socialLinks || {}),
         facebook: settings.socialLinks?.facebook || 'https://www.facebook.com/share/1BcNGQkKGm/?mibextid=wwXIfr',
         instagram: 'https://www.instagram.com/skouted_youth_league',
         youtube: 'https://www.youtube.com/channel/UCy_dA9AmAWwGcDhh1PQtARA?sub_confirmation=1',
         youtubeChannelId: 'UCy_dA9AmAWwGcDhh1PQtARA',
-        youtubeLiveEmbedUrl: 'https://www.youtube.com/embed/lU5MVdwXWvE?autoplay=1&mute=1',
-        youtubeLiveVideoId: 'lU5MVdwXWvE',
-        youtubeLiveTitle: 'SYL 2026/2027 SEASON WEEK 1  IWALEWA FA  VS  RISING ROOTS FA',
-        isLiveNow: true
+        youtubeLiveEmbedUrl: '',
+        youtubeLiveVideoId: 'auto',
+        youtubeLiveTitle: '',
+        isLiveNow: false
       };
       modified = true;
     }
