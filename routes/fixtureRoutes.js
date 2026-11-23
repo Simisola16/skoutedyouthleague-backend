@@ -9,6 +9,7 @@ const User = require('../models/User');
 const EmailService = require('../services/emailService');
 const pushService = require('../services/pushNotificationService');
 const LeagueService = require('../services/leagueService');
+const { recalculateAllPlayerStats } = require('../services/statsService');
 const { broadcastMatchUpdate, broadcastMatchEvent, broadcastStandingsUpdate } = require('../services/socketService');
 const { requireAdmin, requireOfficialOrAdmin } = require('../middleware/authMiddleware');
 
@@ -269,6 +270,7 @@ router.patch('/:id/score', requireOfficialOrAdmin, async (req, res) => {
       await recalculateStandings();
       pushService.notifyFullTime(populated).catch(err => console.error('[Push FullTime Error]:', err.message));
     }
+    await recalculateAllPlayerStats().catch(err => console.error('[Score Player Stats Sync Error]:', err.message));
 
     res.json({ success: true, data: populated });
   } catch (err) {
@@ -320,6 +322,7 @@ router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
     const fixture = await Fixture.findById(req.params.id);
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
 
+    const prevStatus = fixture.status;
     if (status) {
       fixture.status = status;
       if (status === '1ST HALF') {
@@ -374,10 +377,13 @@ router.patch('/:id/period', requireOfficialOrAdmin, async (req, res) => {
 
     if (fixture.status === '1ST HALF') {
       pushService.notifyKickoff(populated).catch(err => console.error('[Push Kickoff Error]:', err.message));
-    } else if (fixture.status === 'FT') {
+    } else if (fixture.status === 'FT' || prevStatus === 'FT') {
       await recalculateStandings();
-      pushService.notifyFullTime(populated).catch(err => console.error('[Push FullTime Error]:', err.message));
+      if (fixture.status === 'FT') {
+        pushService.notifyFullTime(populated).catch(err => console.error('[Push FullTime Error]:', err.message));
+      }
     }
+    await recalculateAllPlayerStats().catch(err => console.error('[Period Player Stats Sync Error]:', err.message));
 
     res.json({ success: true, data: populated });
   } catch (err) {
@@ -423,9 +429,10 @@ router.patch('/:id/reschedule', requireOfficialOrAdmin, async (req, res) => {
     // Broadcast instant update to all connected screens
     broadcastMatchUpdate(populated);
 
-    // If status changed to/from FT, recalculate standings
-    if (fixture.status === 'FT') {
+    // If status changed to/from FT, recalculate standings & player stats
+    if (fixture.status === 'FT' || status) {
       await recalculateStandings();
+      await recalculateAllPlayerStats().catch(err => console.error('[Reschedule Player Stats Sync Error]:', err.message));
     }
 
     // Dispatch email to managers if requested
@@ -496,8 +503,9 @@ router.put('/:id', requireAdmin, async (req, res) => {
       .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
 
     broadcastMatchUpdate(populated);
-    if (fixture.status === 'FT') {
+    if (fixture.status === 'FT' || status !== undefined || homeScore !== undefined || awayScore !== undefined) {
       await recalculateStandings();
+      await recalculateAllPlayerStats().catch(err => console.error('[Fixture Edit Player Stats Sync Error]:', err.message));
     }
 
     res.json({ success: true, message: 'Fixture updated successfully', data: populated });
@@ -546,14 +554,7 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
       event.scoreAtEvent = { home: fixture.homeScore, away: fixture.awayScore };
       await fixture.save();
 
-      // Update scoring player stats
-      if (playerId) {
-        await Player.findByIdAndUpdate(playerId, { $inc: { 'stats.goals': 1 } });
-      }
-      // Update assist player stats
-      if (assistPlayerId) {
-        await Player.findByIdAndUpdate(assistPlayerId, { $inc: { 'stats.assists': 1 } });
-      }
+      // Player goal & assist counts are recalculated atomically below via recalculateAllPlayerStats()
 
       // ASYNC FAN GOAL EMAIL DISPATCH
       try {
@@ -641,13 +642,17 @@ router.post('/:id/events', requireOfficialOrAdmin, async (req, res) => {
       } catch (emailErr) {
         console.error('[Goal Email Trigger Error - Own Goal]:', emailErr.message);
       }
-    } else if (type === 'YELLOW_CARD') {
-      if (playerId) await Player.findByIdAndUpdate(playerId, { $inc: { 'stats.yellowCards': 1 } });
-    } else if (type === 'RED_CARD') {
-      if (playerId) await Player.findByIdAndUpdate(playerId, { $inc: { 'stats.redCards': 1 } });
+    } else if (type === 'YELLOW_CARD' || type === 'RED_CARD') {
+      // Card counts are recalculated atomically below via recalculateAllPlayerStats()
     }
 
     await event.save();
+
+    // Automatically recalculate exact player goals, assists, cards, matches, minutes & broadcast leaders live
+    await recalculateAllPlayerStats().catch(err => console.error('[Log Event Player Stats Sync Error]:', err.message));
+    if (fixture.status === 'FT' && (type === 'GOAL' || type === 'OWN_GOAL')) {
+      await recalculateStandings();
+    }
 
     const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer inPlayer outPlayer');
     const populatedFixture = await Fixture.findById(fixture._id)
@@ -728,6 +733,9 @@ router.patch('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) =>
 
     await event.save();
 
+    // Keep player goals, assists, matches & minutes in exact sync after any event edit
+    await recalculateAllPlayerStats().catch(err => console.error('[Update Event Player Stats Sync Error]:', err.message));
+
     const populatedEvent = await MatchEvent.findById(event._id).populate('team player assistPlayer inPlayer outPlayer');
     broadcastMatchEvent(populatedEvent);
 
@@ -747,13 +755,39 @@ router.delete('/:id/events/:eventId', requireOfficialOrAdmin, async (req, res) =
     const event = await MatchEvent.findById(req.params.eventId);
     if (!event) return res.status(404).json({ success: false, error: 'Event not found' });
 
+    const fixture = await Fixture.findById(req.params.id);
+
     await MatchEvent.findByIdAndDelete(req.params.eventId);
+
+    // If deleting a GOAL or OWN_GOAL, also revert the fixture score so scoreboard stays accurate
+    let updatedFixture = null;
+    if (fixture && (event.type === 'GOAL' || event.type === 'OWN_GOAL')) {
+      const isHomeTeamEvent = event.team && fixture.homeTeam.toString() === event.team.toString();
+      if (event.type === 'GOAL') {
+        if (isHomeTeamEvent) fixture.homeScore = Math.max(0, (fixture.homeScore || 0) - 1);
+        else fixture.awayScore = Math.max(0, (fixture.awayScore || 0) - 1);
+      } else if (event.type === 'OWN_GOAL') {
+        if (isHomeTeamEvent) fixture.awayScore = Math.max(0, (fixture.awayScore || 0) - 1);
+        else fixture.homeScore = Math.max(0, (fixture.homeScore || 0) - 1);
+      }
+      await fixture.save();
+      updatedFixture = await Fixture.findById(fixture._id)
+        .populate('homeTeam awayTeam')
+        .populate('homeLineup.startingXI.player awayLineup.startingXI.player');
+      broadcastMatchUpdate(updatedFixture);
+      if (fixture.status === 'FT') {
+        await recalculateStandings();
+      }
+    }
+
+    // Recalculate all player stats so deleted goals/assists/cards/subs are deducted immediately
+    await recalculateAllPlayerStats().catch(err => console.error('[Delete Event Player Stats Sync Error]:', err.message));
 
     const events = await MatchEvent.find({ fixture: req.params.id })
       .populate('team player assistPlayer inPlayer outPlayer')
       .sort({ minute: 1, createdAt: 1 });
 
-    res.json({ success: true, message: 'Event deleted successfully', data: { events } });
+    res.json({ success: true, message: 'Event deleted successfully', data: { events, fixture: updatedFixture } });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -786,6 +820,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
       if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
       await MatchEvent.deleteMany({ fixture: req.params.id });
       await recalculateStandings();
+      await recalculateAllPlayerStats().catch(() => {});
       return res.json({ success: true, message: 'Fixture permanently deleted' });
     }
 
@@ -796,6 +831,7 @@ router.delete('/:id', requireAdmin, async (req, res) => {
     );
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
     await recalculateStandings();
+    await recalculateAllPlayerStats().catch(() => {});
     res.json({ success: true, message: 'Fixture moved to trash', data: fixture });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -812,17 +848,23 @@ router.post('/:id/restore', requireAdmin, async (req, res) => {
     );
     if (!fixture) return res.status(404).json({ success: false, error: 'Fixture not found' });
     await recalculateStandings();
+    await recalculateAllPlayerStats().catch(() => {});
     res.json({ success: true, message: 'Fixture restored successfully', data: fixture });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// 9. Force Recalculate Standings (Admin)
+// 9. Force Recalculate Standings & Player Stats (Admin)
 router.post('/recalculate', requireAdmin, async (req, res) => {
   try {
     await recalculateStandings();
-    res.json({ success: true, message: 'League standings recalculated and broadcasted successfully.' });
+    const statsResult = await recalculateAllPlayerStats();
+    res.json({
+      success: true,
+      message: `League standings & player stats recalculated (${statsResult.updatedPlayers} players updated) and broadcasted successfully.`,
+      data: statsResult.leaders
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

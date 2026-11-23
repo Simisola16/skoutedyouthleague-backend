@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Team = require('../models/Team');
-const Player = require('../models/Player');
-const Fixture = require('../models/Fixture');
+const { getLeadersPayload, recalculateAllPlayerStats } = require('../services/statsService');
+const { requireAdmin } = require('../middleware/authMiddleware');
 
 // 1. Live Standings / Table
 router.get('/standings', async (req, res) => {
@@ -20,48 +20,25 @@ router.get('/standings', async (req, res) => {
 router.get('/leaders', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '50', 10);
-
-    // Top Scorers
-    const topScorers = await Player.find({ 'stats.goals': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl stats')
-      .sort({ 'stats.goals': -1, 'stats.assists': -1, 'stats.matches': 1 })
-      .limit(limit);
-
-    // Top Assists (Playmakers)
-    const topAssists = await Player.find({ 'stats.assists': { $gt: 0 }, isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl stats')
-      .sort({ 'stats.assists': -1, 'stats.goals': -1, 'stats.matches': 1 })
-      .limit(limit);
-
-    // Clean Sheets (Goalkeepers)
-    const topKeepers = await Player.find({ position: 'GK', isDeleted: { $ne: true } })
-      .populate('team', 'name shortCode logo logoUrl stats')
-      .sort({ 'stats.cleanSheets': -1, 'stats.matches': -1 })
-      .limit(limit);
-
-    // Tournament Summary
-    const totalGoals = await Player.aggregate([
-      { $match: { isDeleted: { $ne: true } } },
-      { $group: { _id: null, total: { $sum: '$stats.goals' } } }
-    ]);
-
-    const totalAssists = await Player.aggregate([
-      { $match: { isDeleted: { $ne: true } } },
-      { $group: { _id: null, total: { $sum: '$stats.assists' } } }
-    ]);
-
-    const totalMatches = await Fixture.countDocuments({ status: 'FT', isDeleted: { $ne: true } });
+    const data = await getLeadersPayload(limit);
 
     res.json({
       success: true,
-      data: {
-        topScorers,
-        topAssists,
-        topKeepers,
-        totalGoals: totalGoals[0]?.total || 0,
-        totalAssists: totalAssists[0]?.total || 0,
-        totalMatches
-      }
+      data
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 3. Force Recalculate All Player Stats (Admin)
+router.post('/recalculate', requireAdmin, async (req, res) => {
+  try {
+    const result = await recalculateAllPlayerStats();
+    res.json({
+      success: true,
+      message: `Player statistics recalculated (${result.updatedPlayers} players updated) and broadcasted.`,
+      data: result.leaders
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

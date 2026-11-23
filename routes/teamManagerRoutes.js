@@ -627,6 +627,11 @@ router.post('/lineup', async (req, res) => {
 
     await fixture.save();
 
+    if (['FT', '1ST HALF', 'HT', '2ND HALF', 'PENS', 'LIVE'].includes(fixture.status)) {
+      const { recalculateAllPlayerStats } = require('../services/statsService');
+      recalculateAllPlayerStats().catch(err => console.error('[Manager Lineup Player Stats Sync Error]:', err.message));
+    }
+
     const populated = await Fixture.findById(fixture._id)
       .populate('homeTeam awayTeam')
       .populate('homeLineup.startingXI.player awayLineup.startingXI.player homeLineup.bench.player awayLineup.bench.player');

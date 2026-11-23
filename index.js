@@ -29,6 +29,7 @@ const mediaRoutes = require('./routes/mediaRoutes');
 const socialRoutes = require('./routes/socialRoutes');
 const pushRoutes = require('./routes/pushRoutes');
 const SocialSyncService = require('./services/socialSyncService');
+const { recalculateAllPlayerStats } = require('./services/statsService');
 
 const app = express();
 const server = http.createServer(app);
@@ -206,6 +207,10 @@ mongoose.connect(MONGODB_URI)
       // Start background cron jobs
       startScheduler();
       SocialSyncService.initScheduler();
+      // Sync all player stats (goals, assists, matches played, minutes, clean sheets) on startup
+      setTimeout(() => {
+        recalculateAllPlayerStats().catch(err => console.error('[Startup Player Stats Sync Error]:', err.message));
+      }, 4000);
     });
   })
   .catch((err) => {
